@@ -101,9 +101,16 @@ async function addGridOutline(project, sequence, options) {
   const filePath = `${GRID_OUTLINES_DIR}/${fileName}`;
   const outlineItem = await findOrImportProjectItem(project, filePath, fileName);
 
+  // createSetScaleToFrameSizeAction only exists on a ClipProjectItem, not
+  // the plain ProjectItem getItems() hands back - cast first.
+  const outlineClipItem = ppro.ClipProjectItem.cast(outlineItem);
+  if (!outlineClipItem) {
+    throw new Error(`"${fileName}" didn't import as expected (not a clip project item).`);
+  }
+
   project.lockedAccess(() => {
     project.executeTransaction((compoundAction) => {
-      compoundAction.addAction(outlineItem.createSetScaleToFrameSizeAction());
+      compoundAction.addAction(outlineClipItem.createSetScaleToFrameSizeAction());
     }, "Grid Reveal: scale outline to frame");
   });
 
