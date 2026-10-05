@@ -7,7 +7,6 @@
  */
 
 const ppro = require("premierepro");
-const { ticksEqual } = require("./premiereHelpers");
 
 // Hardcoded to this plugin's known install location - update this if the
 // plugin folder (or the Grid Outlines subfolder) ever moves.
@@ -108,10 +107,26 @@ async function addGridOutline(project, sequence, options) {
     throw new Error(`"${fileName}" didn't import as expected (not a clip project item).`);
   }
 
+  // Set the SOURCE project item's own duration to exactly the reveal
+  // window before placing it, rather than placing it at Premiere's default
+  // still-image duration and trying to trim the timeline instance
+  // afterward - trimming the placed instance directly wasn't taking
+  // effect, so this sidesteps that entirely: it lands already the right
+  // length. (0 -> durationTicks is a valid window in the image's own
+  // in/out coordinate space, same as any clip's media-relative in/out.)
+  const durationTicks = endTime.ticksNumber - startTime.ticksNumber;
+  const outlineOutPoint = ppro.TickTime.createWithTicks(String(durationTicks));
+
   project.lockedAccess(() => {
     project.executeTransaction((compoundAction) => {
       compoundAction.addAction(outlineClipItem.createSetScaleToFrameSizeAction());
-    }, "Grid Reveal: scale outline to frame");
+      compoundAction.addAction(
+        outlineClipItem.createSetInOutPointsAction(
+          ppro.TickTime.TIME_ZERO,
+          outlineOutPoint
+        )
+      );
+    }, "Grid Reveal: prep outline asset");
   });
 
   const sequenceEditor = ppro.SequenceEditor.getEditor(sequence);
@@ -129,36 +144,6 @@ async function addGridOutline(project, sequence, options) {
   });
   if (!placeSuccess) {
     throw new Error("Failed to place the grid outline overlay on the timeline.");
-  }
-
-  // Re-query: find the clip we just placed, then trim it to exactly the
-  // reveal window - its default still-image duration will usually run
-  // much longer than that.
-  const track = await sequence.getVideoTrack(trackIndex);
-  const items = await track.getTrackItems(ppro.Constants.TrackItemType.CLIP, false);
-  let placedItem = null;
-  for (const item of items) {
-    const itemStart = await item.getStartTime();
-    if (ticksEqual(itemStart, startTime)) {
-      placedItem = item;
-      break;
-    }
-  }
-  if (!placedItem) {
-    throw new Error(
-      `Placed the grid outline overlay but couldn't locate it again to trim it. ` +
-        `Undo (Ctrl+Z / Cmd+Z) and try again.`
-    );
-  }
-
-  let trimSuccess = false;
-  project.lockedAccess(() => {
-    trimSuccess = project.executeTransaction((compoundAction) => {
-      compoundAction.addAction(placedItem.createSetEndAction(endTime));
-    }, "Grid Reveal: trim outline overlay to reveal length");
-  });
-  if (!trimSuccess) {
-    throw new Error("Failed to trim the grid outline overlay to the reveal length.");
   }
 }
 
