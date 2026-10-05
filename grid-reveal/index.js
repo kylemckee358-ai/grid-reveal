@@ -3,6 +3,8 @@ const { buildGrid } = require("./src/gridBuilder");
 const rowsInput = document.getElementById("rows");
 const colsInput = document.getElementById("cols");
 const frameDelayInput = document.getElementById("frame-delay");
+const revealOrderInput = document.getElementById("reveal-order");
+const reverseOrderInput = document.getElementById("reverse-order");
 const buildButton = document.getElementById("build-button");
 const statusEl = document.getElementById("status");
 
@@ -41,10 +43,16 @@ buildButton.addEventListener("click", async () => {
   buildButton.disabled = true;
   setStatus("Working...");
 
+  const revealOrder = revealOrderInput.value;
+  const reverseOrder = reverseOrderInput.checked;
+
   try {
-    const resultMessage = await buildGrid({ rows, cols, frameDelay }, (progress) => {
-      setStatus(progress);
-    });
+    const resultMessage = await buildGrid(
+      { rows, cols, frameDelay, revealOrder, reverseOrder },
+      (progress) => {
+        setStatus(progress);
+      }
+    );
     setStatus(resultMessage, "success");
   } catch (err) {
     setStatus(err && err.message ? err.message : String(err), "error");

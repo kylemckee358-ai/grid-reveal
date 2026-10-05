@@ -3,33 +3,47 @@
 A Premiere Pro panel that turns one clip into a staggered grid of itself.
 Select a clip, click one button, and it:
 
-1. Cell 1 (top-left) starts out as the clip itself, full length, nothing
-   trimmed.
-2. Clones it onto the 8 tracks above it.
-3. Defines a shared "split point" 18 frames (`frameDelay x cellCount`) after
-   the clip's start. Every clone's end gets pulled back to that same split
-   point, and its head trimmed forward by 2 more frames than the last (clone
-   1 loses 2 frames, clone 2 loses 4, clone 3 loses 6, ...) — because
-   trimming a clip's head moves its timeline start forward while its end
-   stays put, this staggers every clone's start time while all 8 of them end
-   together, exactly at the split-point frame.
-4. If the clip runs longer than the split point, one more clone is made on
-   its own dedicated track above the grid. Its head gets trimmed forward by
-   that same 18-frame window (the same trimming move as the other 8, just
-   without capping the far end) — which both moves it to start exactly at
-   the split point *and* makes it continue playing the footage that comes
-   right after, rather than restarting from the beginning. Cell 1's own end
-   gets pulled back to the split point too, same as the other 8 cells, so
-   the handoff is seamless.
-5. Crops cells 1-9 (not the continuation) to their 1/9 of the frame
-   (top-left, top-middle, top-right, middle-left, ...).
+1. Every cell's spatial position is fixed, row-major (cell 1 = top-left,
+   the last cell = bottom-right) — that's what the crop is based on, and
+   it's separate from reveal order.
+2. The **reveal order** setting decides which cells pop in together and in
+   what sequence, as a series of steps — each step can be a single cell or
+   a whole group:
+   - **Sequential:** one cell per step, 1→2→3→...
+   - **Spiral:** one cell per step, clockwise from top-left into the center
+     (for 3x3: 1,2,3,6,9,8,7,4,5).
+   - **Horizontal:** one *column* per step — all of column 1 pops in
+     together, then column 2, then column 3.
+   - **Vertical:** one *row* per step, top to bottom.
+   - **Reverse order** (checkbox) flips the step sequence — last step
+     first — without changing which cells are grouped together.
+3. The clip gets cloned onto a track for every grid cell, plus one more
+   dedicated track for a continuation clip if the footage runs long enough
+   to need one.
+4. A shared "split point" is defined at `frameDelay x number-of-steps`
+   frames after the clip's start — that's the whole reveal window. Every
+   cell's end gets pulled back to that split point. A cell in the
+   first-revealed step needs no other change; every other cell also gets
+   its start pushed forward by (its step's position x frameDelay) frames —
+   because trimming a clip's head moves its timeline start forward while
+   its end stays put, cells in later steps start later while every cell
+   still ends together, at the split point.
+5. If the clip runs longer than the split point, the continuation clip gets
+   its start pushed forward by the *full* split-point window (the same
+   trimming move, just not capped at the far end) — which both moves it to
+   start exactly at the split point *and* makes it continue playing the
+   footage that comes right after, rather than restarting from the
+   beginning.
+6. Crops every grid cell (not the continuation) to its fixed 1/N of the
+   frame.
 
-The result: the 9 cells pop in one at a time, 2 frames apart, each showing a
+The result: cells pop in by step, `frameDelay` frames apart, each showing a
 short, slightly later window of the same footage, all converging together
 at the split-point frame — and right at that instant, the view snaps to the
 full, uncropped frame and keeps playing normally for the rest of the clip.
 No opacity animation needed anywhere; the reveal timing comes entirely from
-where each clip starts and ends.
+where each clip starts and ends. The reveal-order logic lives on its own in
+`src/revealOrder.js`, separate from the grid-building mechanics.
 
 ## What you need
 
@@ -63,10 +77,12 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 ## Using it
 
 1. On your timeline, select the one clip you want to turn into a grid. It
-   needs to be at least `frameDelay x cellCount` frames long (18 frames for
-   the 3x3 default) so there's room for the split point — if it's shorter,
-   the panel will tell you and stop. If it's longer, the extra footage
-   automatically continues, full-frame, after the grid finishes revealing.
+   needs to be at least `frameDelay x number-of-steps` frames long (18
+   frames for the 3x3 Sequential/Spiral default, 6 frames for Horizontal/
+   Vertical at a 2-frame delay, since those only take 3 steps) so there's
+   room for the split point — if it's shorter, the panel will tell you and
+   stop. If it's longer, the extra footage automatically continues,
+   full-frame, after the grid finishes revealing.
 2. Make sure there are enough **empty video tracks directly above it** —
    for the default 3x3 grid, that's 8 empty tracks for the grid cells, plus
    1 more if your clip is long enough to need a continuation track (9 or 10
@@ -74,7 +90,7 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
    to add: right-click the track header area on the left of the timeline →
    **Add Tracks**.
 3. In the Grid Reveal panel, leave the defaults (3 rows, 3 columns, 2 frame
-   delay, Instant pop) or change them.
+   delay, Sequential order, Instant pop) or change them.
 4. Click **3x3 Grid** (the button relabels itself if you change rows/columns).
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
@@ -93,9 +109,6 @@ few undos fully reverts back to your original single clip.
   copies of the same audio will sound wrong. This wasn't part of the
   original effect, so it's left for you to handle however you'd normally
   mute a clip.
-- **Reveal order** is currently always row-major: 1→2→3 / 4→5→6 / 7→8→9,
-  matching the original spec. The code is structured so a future "reveal
-  order" control just needs to supply a different ordering — no rewrite.
 - **Reveal style:** only "Instant pop" (hard cut, no fade) is wired up for
   now. "Fade" is shown in the dropdown as a placeholder for later.
 - **Where the crop actually lives:** this tool crops each cell using the
@@ -108,8 +121,12 @@ few undos fully reverts back to your original single clip.
 
 ## Changing the defaults
 
-Rows, columns, and frame delay are editable right in the panel before you
-click the button — no code changes needed for everyday use. If you want to
-change deeper behavior (e.g. which track direction it stacks on, or how the
-crop math works), the logic is in `src/gridBuilder.js`, laid out in the same
-order as the steps above.
+Rows, columns, frame delay, reveal order, and reverse are all editable
+right in the panel before you click the button — no code changes needed for
+everyday use. If you want to add a new reveal order of your own, it's a
+self-contained addition to `src/revealOrder.js` (add a case to
+`computeRevealGroups` returning an array of cell-index groups, then add it
+to the dropdown in `index.html`) — the grid-building logic in
+`src/gridBuilder.js` doesn't need to change at all. For deeper changes (e.g.
+which track direction it stacks on, or how the crop math works), that logic
+is in `src/gridBuilder.js`, laid out in the same order as the steps above.

@@ -4,33 +4,38 @@
  * Takes the single selected clip and builds `rows x cols` staggered,
  * cropped copies of it:
  *
- *   1. Cell 0 (top-left) starts out as the selected clip itself, untouched.
- *   2. It's cloned onto the (cellCount - 1) tracks above it, each clone
- *      initially identical to the original. If the clip runs longer than
- *      the split-point window (see below), one more clone is made on a
- *      further, dedicated track - the eventual continuation clip.
- *   3. A shared "split point" is defined at `frameDelay * cellCount` frames
- *      (e.g. 2 * 9 = 18) after cell 0's start. Every clone (cells 1..N) gets
- *      its OUT point pulled back to that same split point, and its IN point
- *      pushed forward by `frameDelay * cellIndex` frames (clone 1 loses the
- *      first 2 frames, clone 2 the first 4, ...). Because a head-trim moves
- *      a clip's timeline start forward while its end stays anchored, this
- *      staggers every clone's start time while all of them end together,
- *      at the split point. Cell 0's own OUT point is pulled back to the
- *      split point too, same as every other cell.
- *   4. The continuation clone (if any) gets its IN point pushed forward by
- *      the *full* split-point window (not progressively, like the staggered
- *      cells) and its OUT point left untouched - so the same head-trim
- *      mechanism that staggers cells 1..N here instead lands it exactly at
- *      the split point, still playing the footage that comes right after
- *      it, for the clip's remaining length. This is what cells 1..N do too,
- *      just without capping the far end.
- *   5. Each of the cellCount grid pieces gets cropped to its own 1/N of the
- *      frame (row-major: cell 0 = top-left, ... last cell = bottom-right)
- *      using the Crop Left/Top/Right/Bottom controls built into the clip's
- *      own Motion effect - current Premiere versions fold cropping into
- *      Motion rather than exposing it as a separate addable effect. The
- *      continuation clone is left untouched - full frame, uncropped.
+ *   1. A grid cell's spatial position is always fixed and row-major: cell
+ *      index i = row * cols + col (cell 0 is top-left, the last cell is
+ *      bottom-right). That's what determines its crop region - it has
+ *      nothing to do with reveal order.
+ *   2. Separately, config.revealOrder + config.reverseOrder (see
+ *      revealOrder.js) decide which cells reveal together and in what
+ *      sequence, as an ordered array of "groups" - each group a set of
+ *      cell indices that pop in at the same step. Sequential and spiral
+ *      orders use 1-cell groups (cellCount steps total); horizontal and
+ *      vertical group a whole column/row together (rows or cols steps
+ *      total, whichever applies).
+ *   3. The original clip is cloned onto (cellCount - 1) tracks above it,
+ *      plus one more dedicated track for a continuation clip if the
+ *      footage runs long enough to need one.
+ *   4. A shared "split point" is defined at `frameDelay * numGroups` frames
+ *      after the clip's start - that's the total reveal window. Every
+ *      cell's end gets pulled back to that split point. A cell in the
+ *      first-revealed group gets no other change; a cell in a later group
+ *      gets its start pushed forward by (its group's index * frameDelay)
+ *      frames - because trimming a clip's head moves its timeline start
+ *      forward while its end stays anchored, cells in later groups start
+ *      later while every cell still ends together, at the split point.
+ *   5. If the clip runs longer than the split point, the continuation clone
+ *      gets its start pushed forward by the *full* split-point window (the
+ *      same head-trim mechanism, just not capped at the far end) - so it
+ *      picks up exactly the footage that comes right after the reveal,
+ *      rather than restarting from the beginning.
+ *   6. Each of the cellCount grid pieces gets cropped to its own 1/N of the
+ *      frame using the Crop Left/Top/Right/Bottom controls built into the
+ *      clip's own Motion effect - current Premiere versions fold cropping
+ *      into Motion rather than exposing it as a separate addable effect.
+ *      The continuation clone is left untouched - full frame, uncropped.
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
@@ -52,12 +57,15 @@ const {
   frameToTickTime,
   ticksEqual,
 } = require("./premiereHelpers");
+const { computeRevealGroups, groupIndexByCell } = require("./revealOrder");
 
 /**
  * @param {object} config
  * @param {number} config.rows
  * @param {number} config.cols
- * @param {number} config.frameDelay - frames each successive cell is staggered by
+ * @param {number} config.frameDelay - frames between each reveal step
+ * @param {string} config.revealOrder - "sequential" | "spiral" | "horizontal" | "vertical"
+ * @param {boolean} config.reverseOrder - reveal the steps last-to-first
  * @param {(status: string) => void} onProgress - called with short status strings
  */
 async function buildGrid(config, onProgress) {
@@ -66,6 +74,15 @@ async function buildGrid(config, onProgress) {
   const frameDelay = config.frameDelay;
   const cellCount = rows * cols;
   const report = onProgress || (() => {});
+
+  const groups = computeRevealGroups(
+    rows,
+    cols,
+    config.revealOrder,
+    config.reverseOrder
+  );
+  const numGroups = groups.length;
+  const cellGroupIndex = groupIndexByCell(groups);
 
   const project = await ppro.Project.getActiveProject();
   if (!project) {
@@ -87,13 +104,13 @@ async function buildGrid(config, onProgress) {
   const settings = await sequence.getSettings();
   const frameRate = await settings.getVideoFrameRate();
 
-  // --- Step 1: the selected clip must be at least frameDelay * cellCount
-  // frames long - that's the window every staggered piece is carved from.
-  // Figure out, from that, whether a continuation clip will be needed. ---
+  // --- Step 1: the selected clip must be at least frameDelay * numGroups
+  // frames long - that's the total reveal window every piece is carved
+  // from. Figure out, from that, whether a continuation clip is needed. ---
   const originalTrackIndex = await original.getTrackIndex();
   const originalStart = await original.getStartTime();
   const originalEnd = await original.getEndTime();
-  const requiredDurationFrames = frameDelay * cellCount;
+  const requiredDurationFrames = frameDelay * numGroups;
   const requiredDurationTicks = frameToTickTime(
     requiredDurationFrames,
     frameRate
@@ -103,9 +120,9 @@ async function buildGrid(config, onProgress) {
 
   if (originalDurationTicks < requiredDurationTicks) {
     throw new Error(
-      `Clip too short. At a ${frameDelay}-frame delay, a ${rows}x${cols} grid needs ` +
-        `at least ${requiredDurationFrames} frames; your selected clip is shorter than that. ` +
-        `Pick a longer clip, or lower the frame delay / grid size.`
+      `Clip too short. At a ${frameDelay}-frame delay, this reveal needs at least ` +
+        `${requiredDurationFrames} frames; your selected clip is shorter than that. ` +
+        `Pick a longer clip, or lower the frame delay.`
     );
   }
 
@@ -225,37 +242,40 @@ async function buildGrid(config, onProgress) {
     }
   }
 
-  // --- Transaction B: stagger cells 1..N and cap cell 0's own end, all to
-  // the same shared split point; trim the continuation clip's head forward
-  // by the full split-point window (same mechanism, just not capped at the
-  // far end) so it picks up exactly where the grid's footage leaves off. ---
+  // --- Transaction B: every grid cell's end gets pulled back to the shared
+  // split point. A cell in the first-revealed group needs no other change;
+  // every other cell also gets its start pushed forward by its group's
+  // index * frameDelay frames - same head-trim mechanism either way, just
+  // skipped when the offset is zero. The continuation clip (if any) gets
+  // the same head-trim, by the *full* split-point window, with its end left
+  // untouched, so it picks up exactly where the grid's footage leaves off. ---
   report("Staggering cells...");
   const originalInPoint = await original.getInPoint();
   const splitPointTicks = originalInPoint.ticksNumber + requiredDurationTicks;
   const splitPoint = ppro.TickTime.createWithTicks(String(splitPointTicks));
 
-  const headTrimData = [];
-  for (let i = 1; i < cellCount; i += 1) {
-    const item = cellItems[i];
-    const offsetTicks = frameToTickTime(frameDelay * i, frameRate).ticksNumber;
-    const newInPoint = ppro.TickTime.createWithTicks(
-      String(originalInPoint.ticksNumber + offsetTicks)
-    );
-    headTrimData.push({ item, newInPoint, outPoint: splitPoint });
+  const trimData = [];
+  for (let i = 0; i < cellCount; i += 1) {
+    const headTrimFrames = frameDelay * cellGroupIndex[i];
+    let newInPoint = null;
+    if (headTrimFrames > 0) {
+      const offsetTicks = frameToTickTime(headTrimFrames, frameRate).ticksNumber;
+      newInPoint = ppro.TickTime.createWithTicks(
+        String(originalInPoint.ticksNumber + offsetTicks)
+      );
+    }
+    trimData.push({ item: cellItems[i], newInPoint, outPoint: splitPoint });
   }
 
   let staggerSuccess = false;
   project.lockedAccess(() => {
     staggerSuccess = project.executeTransaction((compoundAction) => {
-      for (const { item, newInPoint, outPoint } of headTrimData) {
-        compoundAction.addAction(item.createSetInPointAction(newInPoint));
+      for (const { item, newInPoint, outPoint } of trimData) {
+        if (newInPoint) {
+          compoundAction.addAction(item.createSetInPointAction(newInPoint));
+        }
         compoundAction.addAction(item.createSetOutPointAction(outPoint));
       }
-      // Cell 0 (the original) keeps its start untouched, but its end gets
-      // pulled back to the split point too, same as every other cell.
-      compoundAction.addAction(original.createSetOutPointAction(splitPoint));
-      // The continuation clip: head-trimmed forward by the full window,
-      // out point left alone - same mechanism, just not capped.
       if (continuationItem) {
         compoundAction.addAction(continuationItem.createSetInPointAction(splitPoint));
       }
@@ -294,7 +314,8 @@ async function buildGrid(config, onProgress) {
     cropParamSets.push(params);
   }
 
-  // --- Transaction C: set each grid cell's Crop percentages. ---
+  // --- Transaction C: set each grid cell's Crop percentages, by its fixed
+  // row-major spatial position - unrelated to reveal order. ---
   report("Cropping each cell...");
   const cellSize = { w: 100 / cols, h: 100 / rows };
   let cropValueSuccess = false;
