@@ -17,15 +17,18 @@
  *      staggers every clone's start time while all of them end together,
  *      exactly at the moment cell 0 (still playing its full length) reaches
  *      the split point itself.
- *   4. Each of the cellCount pieces gets a Crop effect isolating its 1/N of
- *      the frame (row-major: cell 0 = top-left, ... last cell = bottom-right).
+ *   4. Each of the cellCount pieces gets cropped to its own 1/N of the frame
+ *      (row-major: cell 0 = top-left, ... last cell = bottom-right) using
+ *      the Crop Left/Top/Right/Bottom controls built into the clip's own
+ *      Motion effect - current Premiere versions fold cropping into Motion
+ *      rather than exposing it as a separate addable effect.
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
  *
- * The Crop component and its Left/Top/Right/Bottom params are looked up by
- * match name / display name at runtime rather than assumed by index, since
- * component-chain order isn't something the API guarantees.
+ * The Motion component and its Crop params are looked up by display name at
+ * runtime rather than assumed by index, since component-chain order isn't
+ * something the API guarantees.
  *
  * Known simplification: frame-offset math assumes the source clip's native
  * frame rate matches the sequence's frame rate. If they differ, trim amounts
@@ -35,15 +38,11 @@
 const {
   ppro,
   getSelectedVideoClipTrackItems,
-  resolveMatchName,
-  findComponentByMatchName,
+  findComponentByDisplayName,
   findParamByDisplayName,
   frameToTickTime,
   ticksEqual,
 } = require("./premiereHelpers");
-
-const CROP_PREFERRED_MATCH_NAME = "AE.ADBE AECrop";
-const CROP_NAME_FALLBACK_SEARCH = "crop";
 
 /**
  * @param {object} config
@@ -140,12 +139,6 @@ async function buildGrid(config, onProgress) {
     }
   }
 
-  report("Resolving effects...");
-  const cropMatchName = await resolveMatchName(
-    CROP_PREFERRED_MATCH_NAME,
-    CROP_NAME_FALLBACK_SEARCH
-  );
-
   const sequenceEditor = ppro.SequenceEditor.getEditor(sequence);
 
   // --- Transaction A: clone the original clip, untouched, onto the
@@ -232,60 +225,35 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to stagger the grid cells.");
   }
 
-  // --- Transaction C: add a Crop effect to every one of the cellCount copies.
-  // Appended to the end of each chain - no assumption about how many fixed
-  // components (Motion, Opacity, ...) come before it. ---
-  report("Adding Crop effect...");
-  // getComponentChain() is async, so fetch every chain before opening the
-  // locked transaction below (lockedAccess callbacks must stay synchronous).
-  const componentChains = [];
-  for (const item of cellItems) {
-    componentChains.push(await item.getComponentChain());
-  }
-  let cropInsertSuccess = false;
-  project.lockedAccess(() => {
-    cropInsertSuccess = project.executeTransaction((compoundAction) => {
-      for (const chain of componentChains) {
-        const cropComponent = ppro.VideoFilterFactory.createComponent(
-          cropMatchName
-        );
-        compoundAction.addAction(chain.createAppendComponentAction(cropComponent));
-      }
-    }, "Grid Reveal: add Crop");
-  });
-  if (!cropInsertSuccess) {
-    throw new Error("Failed to add the Crop effect to the grid copies.");
-  }
-
-  // --- Re-resolve: find the Crop component we just added on each chain by
-  // match name, and its Left/Top/Right/Bottom params by display name -
-  // chain/param order isn't something the API guarantees, so we look each
-  // one up rather than assume a position. ---
-  report("Locating Crop params...");
+  // --- Locate each cell's Motion component and its built-in Crop params.
+  // No separate effect needs adding - Motion is always present, and current
+  // Premiere versions carry Crop Left/Top/Right/Bottom directly on it. ---
+  report("Locating Crop controls...");
+  const paramNames = ["Crop Left", "Crop Top", "Crop Right", "Crop Bottom"];
   const cropParamSets = [];
-  for (const chain of componentChains) {
-    const cropComponent = await findComponentByMatchName(chain, cropMatchName);
-    if (!cropComponent) {
+  for (const item of cellItems) {
+    const chain = await item.getComponentChain();
+    const motionComponent = await findComponentByDisplayName(chain, "Motion");
+    if (!motionComponent) {
       throw new Error(
-        `Added a Crop effect but couldn't find it again on the component chain. ` +
+        `Couldn't find the built-in Motion effect on one of the grid cells. ` +
           `Undo (Ctrl+Z / Cmd+Z) and try again.`
       );
     }
-    const paramNames = ["Left", "Top", "Right", "Bottom"];
     const params = paramNames.map((name) =>
-      findParamByDisplayName(cropComponent, name)
+      findParamByDisplayName(motionComponent, name)
     );
     const missing = paramNames.filter((_, idx) => !params[idx]);
     if (missing.length > 0) {
       throw new Error(
-        `The Crop effect on your Premiere version doesn't expose a "${missing[0]}" ` +
+        `Your Premiere version's Motion effect doesn't expose a "${missing[0]}" ` +
           `parameter by that name. Let me know and I'll adjust the lookup.`
       );
     }
     cropParamSets.push(params);
   }
 
-  // --- Transaction D: set each copy's Crop percentages to its cell. ---
+  // --- Transaction C: set each cell's Crop percentages. ---
   report("Cropping each cell...");
   const cellSize = { w: 100 / cols, h: 100 / rows };
   let cropValueSuccess = false;

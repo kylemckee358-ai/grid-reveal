@@ -70,10 +70,10 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
 
-**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) four times. The grid build
-happens as four grouped steps — clone the clip, stagger the clones, add the
-Crop effect, set each crop region — so four undos fully reverts back to
-your original single clip.
+**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) three times. The grid build
+happens as three grouped steps — clone the clip, stagger the clones, set
+each cell's Crop values — so three undos fully reverts back to your
+original single clip.
 
 ## Things to know
 
@@ -88,10 +88,13 @@ your original single clip.
   order" control just needs to supply a different ordering — no rewrite.
 - **Reveal style:** only "Instant pop" (hard cut, no fade) is wired up for
   now. "Fade" is shown in the dropdown as a placeholder for later.
-- If you ever see an error mentioning it couldn't find the "Crop" effect,
-  your Premiere version may have renamed it — the panel will say so
-  explicitly rather than silently doing the wrong thing; let me know and
-  I'll adjust the match name.
+- **Where the crop actually lives:** this tool crops each cell using the
+  Crop Left/Top/Right/Bottom controls built into the clip's own **Motion**
+  effect (visible in Effect Controls under Motion, alongside Position/
+  Scale/Rotation) — not a separately-listed "Crop" effect. If you ever see
+  an error mentioning it couldn't find a Crop parameter by name, your
+  Premiere version may expose Motion's crop controls differently; let me
+  know and I'll adjust the lookup.
 
 ## Changing the defaults
 

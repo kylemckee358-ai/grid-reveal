@@ -16,39 +16,18 @@ async function getSelectedVideoClipTrackItems(sequence) {
 }
 
 /**
- * Finds the first project item whose match name contains the given needle
- * (case-insensitive). Used to resolve the Crop effect's real match name at
- * runtime instead of hard-coding it, so a naming difference fails with a
- * clear error instead of silently applying the wrong effect.
+ * Finds a component in a chain by its display name (not by index - component
+ * chain order isn't something we should assume). Used to find the built-in
+ * "Motion" effect, which is always present on a video clip and - in current
+ * Premiere versions - carries the Crop Left/Top/Right/Bottom controls
+ * directly, rather than those living on a separate "Crop" effect.
  */
-async function resolveMatchName(preferredMatchName, nameContains) {
-  const allMatchNames = await ppro.VideoFilterFactory.getMatchNames();
-  if (allMatchNames.includes(preferredMatchName)) {
-    return preferredMatchName;
-  }
-  const needle = nameContains.toLowerCase();
-  const fallback = allMatchNames.find((name) =>
-    name.toLowerCase().includes(needle)
-  );
-  if (!fallback) {
-    throw new Error(
-      `Could not find a video effect matching "${nameContains}" (looked for "${preferredMatchName}"). ` +
-        `Your Premiere version may expose it under a different name.`
-    );
-  }
-  return fallback;
-}
-
-/**
- * Finds a component in a chain by its match name (not by index - component
- * chain order/length isn't something we should assume).
- */
-async function findComponentByMatchName(componentChain, matchName) {
+async function findComponentByDisplayName(componentChain, displayName) {
   const count = componentChain.getComponentCount();
   for (let i = 0; i < count; i += 1) {
     const component = componentChain.getComponentAtIndex(i);
-    const name = await component.getMatchName();
-    if (name === matchName) {
+    const name = await component.getDisplayName();
+    if (name === displayName) {
       return component;
     }
   }
@@ -88,8 +67,7 @@ function ticksEqual(a, b) {
 module.exports = {
   ppro,
   getSelectedVideoClipTrackItems,
-  resolveMatchName,
-  findComponentByMatchName,
+  findComponentByDisplayName,
   findParamByDisplayName,
   frameToTickTime,
   ticksEqual,
