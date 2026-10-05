@@ -1,9 +1,24 @@
 # Grid Reveal
 
-A Premiere Pro panel that turns one clip into a grid of itself, revealing one
-cell at a time. Built for the "3x3 grid reveal" effect: select a clip, click
-one button, get 9 cropped copies stacked on 9 tracks that pop in one at a
-time, 2 frames apart, until the full frame has assembled.
+A Premiere Pro panel that turns one clip into a staggered grid of itself.
+Select a clip, click one button, and it:
+
+1. Trims the clip down to exactly `frameDelay x cellCount` frames (18 frames
+   for the default 3x3 grid at a 2-frame delay) — this becomes cell 1
+   (top-left), on the clip's own track.
+2. Clones it onto the 8 tracks above it.
+3. Trims each clone's head forward by 2 more frames than the last (clone 1
+   loses 2 frames, clone 2 loses 4, clone 3 loses 6, ...) — because trimming
+   a clip's head moves its timeline start forward while its end stays put,
+   this staggers every cell's start time while all 9 keep ending on the
+   exact same frame.
+4. Crops each of the 9 cells to its 1/9 of the frame (top-left, top-middle,
+   top-right, middle-left, ...).
+
+The result: cells pop in one at a time, 2 frames apart, each showing
+slightly later footage than the one before it, and all 9 converge on the
+same final frame at the same instant — no opacity animation needed, the
+reveal timing comes entirely from where each clip starts.
 
 ## What you need
 
@@ -36,7 +51,10 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 
 ## Using it
 
-1. On your timeline, select the one clip you want to turn into a grid.
+1. On your timeline, select the one clip you want to turn into a grid. It
+   needs to be at least `frameDelay x cellCount` frames long (18 frames for
+   the 3x3 default) — if it's longer, the extra gets trimmed off the end
+   automatically; if it's shorter, the panel will tell you and stop.
 2. Make sure there are enough **empty video tracks directly above it** —
    for the default 3x3 grid, that's 8 empty tracks above the clip's own
    track (9 total). If there aren't enough, the panel will tell you exactly
@@ -48,9 +66,10 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
 
-**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) four times. The grid build
-happens as four grouped steps (clone the copies, add the Crop effect, set
-each crop region, set the reveal keyframes), so four undos fully reverts
+**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) up to five times (fewer if
+your clip didn't need trimming to start with). The grid build happens as a
+handful of grouped steps — trim the base clip, clone it, stagger the clones,
+add the Crop effect, set each crop region — so a few undos fully reverts
 back to your original single clip.
 
 ## Things to know

@@ -40,30 +40,6 @@ async function resolveMatchName(preferredMatchName, nameContains) {
 }
 
 /**
- * Returns the fixed Opacity component on a clip's component chain, verifying
- * its display name at runtime rather than trusting a hard-coded index.
- */
-async function getOpacityComponent(componentChain) {
-  const count = componentChain.getComponentCount();
-  for (let i = 0; i < count; i += 1) {
-    const component = componentChain.getComponentAtIndex(i);
-    const displayName = await component.getDisplayName();
-    if (displayName === "Opacity") {
-      return component;
-    }
-  }
-  throw new Error("Could not find the built-in Opacity effect on this clip.");
-}
-
-/**
- * Returns the Opacity Level parameter (the only animatable param on the
- * fixed Opacity effect) off a resolved Opacity component.
- */
-function getOpacityLevelParam(opacityComponent) {
-  return opacityComponent.getParam(0);
-}
-
-/**
  * Converts a frame number (at the sequence's frame rate) to a TickTime.
  */
 function frameToTickTime(frameNumber, frameRate) {
@@ -81,8 +57,6 @@ module.exports = {
   ppro,
   getSelectedVideoClipTrackItems,
   resolveMatchName,
-  getOpacityComponent,
-  getOpacityLevelParam,
   frameToTickTime,
   ticksEqual,
 };

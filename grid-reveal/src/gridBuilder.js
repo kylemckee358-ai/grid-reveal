@@ -1,18 +1,34 @@
 /**
  * The actual "3x3 Grid" effect.
  *
- * Takes the single selected clip and turns it into `rows x cols` stacked,
- * cropped copies of itself that reveal one at a time, row-major, at a fixed
- * frame delay — see /Users/kylemckee/.claude/plans/i-want-you-to-glistening-kitten.md
- * for the full design writeup.
+ * Takes the single selected clip and builds `rows x cols` staggered,
+ * cropped copies of it:
+ *
+ *   1. The selected clip is trimmed down to exactly `frameDelay * cellCount`
+ *      frames (e.g. 2 * 9 = 18), keeping its existing in-point. This becomes
+ *      cell 0 (top-left) - the longest piece, on the clip's own track.
+ *   2. It's cloned onto the (cellCount - 1) tracks above it.
+ *   3. Each clone's head is trimmed forward by `frameDelay * cellIndex`
+ *      frames (clone 1 loses the first 2 frames, clone 2 the first 4, ...),
+ *      which - because trimming a head moves the timeline start forward
+ *      while leaving the end anchored - staggers every piece's start time
+ *      while all 9 keep ending on the exact same timeline frame, showing
+ *      the exact same final source frame.
+ *   4. Each of the 9 pieces gets a Crop effect isolating its 1/9 of the
+ *      frame (row-major: cell 0 = top-left, ... last cell = bottom-right).
+ *
+ * The reveal itself needs no opacity/keyframe animation at all - a track is
+ * simply empty before its piece's (staggered) start time.
+ *
+ * Known simplification: frame-offset math assumes the source clip's native
+ * frame rate matches the sequence's frame rate. If they differ, trim amounts
+ * may be slightly off.
  */
 
 const {
   ppro,
   getSelectedVideoClipTrackItems,
   resolveMatchName,
-  getOpacityComponent,
-  getOpacityLevelParam,
   frameToTickTime,
   ticksEqual,
 } = require("./premiereHelpers");
@@ -26,7 +42,7 @@ const CROP_INSERT_INDEX = 2;
  * @param {object} config
  * @param {number} config.rows
  * @param {number} config.cols
- * @param {number} config.frameDelay - frames between each cell's reveal
+ * @param {number} config.frameDelay - frames each successive cell is staggered by
  * @param {(status: string) => void} onProgress - called with short status strings
  */
 async function buildGrid(config, onProgress) {
@@ -53,6 +69,9 @@ async function buildGrid(config, onProgress) {
   }
   const original = selected[0];
 
+  const settings = await sequence.getSettings();
+  const frameRate = await settings.getVideoFrameRate();
+
   // --- Step 1: figure out which track the clip is on, and whether there's
   // enough room above it for the other (cellCount - 1) copies. ---
   const originalTrackIndex = await original.getTrackIndex();
@@ -69,11 +88,28 @@ async function buildGrid(config, onProgress) {
     );
   }
 
-  // --- Step 2: make sure the tracks we're about to use are actually empty
-  // where this clip sits, so we never clobber other work. ---
+  // --- Step 2: the selected clip must be at least frameDelay * cellCount
+  // frames long - that's the window every staggered piece is carved from. ---
   const originalStart = await original.getStartTime();
   const originalEnd = await original.getEndTime();
+  const requiredDurationFrames = frameDelay * cellCount;
+  const requiredDurationTicks = frameToTickTime(
+    requiredDurationFrames,
+    frameRate
+  ).ticksNumber;
+  const originalDurationTicks =
+    originalEnd.ticksNumber - originalStart.ticksNumber;
 
+  if (originalDurationTicks < requiredDurationTicks) {
+    throw new Error(
+      `Clip too short. At a ${frameDelay}-frame delay, a ${rows}x${cols} grid needs ` +
+        `at least ${requiredDurationFrames} frames; your selected clip is shorter than that. ` +
+        `Pick a longer clip, or lower the frame delay / grid size.`
+    );
+  }
+
+  // --- Step 3: make sure the tracks we're about to use are actually empty
+  // across the clip's full (pre-trim) span, so we never clobber other work. ---
   for (let k = 1; k < cellCount; k += 1) {
     const targetTrackIndex = originalTrackIndex + k;
     const targetTrack = await sequence.getVideoTrack(targetTrackIndex);
@@ -104,10 +140,29 @@ async function buildGrid(config, onProgress) {
   );
 
   const sequenceEditor = ppro.SequenceEditor.getEditor(sequence);
-  const settings = await sequence.getSettings();
-  const frameRate = await settings.getVideoFrameRate();
 
-  // --- Transaction A: clone the clip onto the (cellCount - 1) tracks above it. ---
+  // --- Transaction A: trim the original clip down to exactly the required
+  // window if it's longer (keeps its in-point, pulls the out-point in). ---
+  if (originalDurationTicks > requiredDurationTicks) {
+    report("Trimming base clip...");
+    const originalInPoint = await original.getInPoint();
+    const newOutTicks =
+      originalInPoint.ticksNumber + requiredDurationTicks;
+    const newOutPoint = ppro.TickTime.createWithTicks(String(newOutTicks));
+
+    let trimSuccess = false;
+    project.lockedAccess(() => {
+      trimSuccess = project.executeTransaction((compoundAction) => {
+        compoundAction.addAction(original.createSetOutPointAction(newOutPoint));
+      }, "Grid Reveal: trim base clip");
+    });
+    if (!trimSuccess) {
+      throw new Error("Failed to trim the selected clip to the required length.");
+    }
+  }
+
+  // --- Transaction B: clone the (now correctly-sized) clip onto the
+  // (cellCount - 1) tracks above it, at the same position. ---
   report(`Cloning clip onto ${cellCount - 1} tracks...`);
   let cloneSuccess = false;
   project.lockedAccess(() => {
@@ -115,7 +170,7 @@ async function buildGrid(config, onProgress) {
       for (let k = 1; k < cellCount; k += 1) {
         const cloneAction = sequenceEditor.createCloneTrackItemAction(
           original,
-          ppro.TickTime.TIME_ZERO, // no time offset - same position as original
+          ppro.TickTime.TIME_ZERO, // no time offset - same position as the (trimmed) original
           k, // video track offset, relative to original's track
           0, // audio track offset - see README note on linked audio
           true, // alignToVideo
@@ -129,8 +184,10 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to clone the clip onto the grid tracks.");
   }
 
-  // --- Re-query: find the real clip on each of the cellCount tracks. ---
+  // --- Re-query: find the real clip on each of the cellCount tracks. At
+  // this point all of them still share the same (trimmed) start time. ---
   report("Locating clones...");
+  const trimmedStart = await original.getStartTime();
   const cellItems = [];
   for (let k = 0; k < cellCount; k += 1) {
     const trackIndex = originalTrackIndex + k;
@@ -142,7 +199,7 @@ async function buildGrid(config, onProgress) {
     let found = null;
     for (const item of items) {
       const itemStart = await item.getStartTime();
-      if (ticksEqual(itemStart, originalStart)) {
+      if (ticksEqual(itemStart, trimmedStart)) {
         found = item;
         break;
       }
@@ -156,7 +213,37 @@ async function buildGrid(config, onProgress) {
     cellItems.push(found);
   }
 
-  // --- Transaction B: add a Crop effect to every one of the 9 copies. ---
+  // --- Transaction C: stagger cells 1..N by trimming each one's head
+  // forward by (frameDelay * cellIndex) frames. Out-point is resent
+  // unchanged alongside it, matching Adobe's own sample pattern for
+  // trim actions (both in and out points set together). ---
+  report("Staggering cells...");
+  const headTrimData = [];
+  for (let i = 1; i < cellCount; i += 1) {
+    const item = cellItems[i];
+    const inPoint = await item.getInPoint();
+    const outPoint = await item.getOutPoint();
+    const offsetTicks = frameToTickTime(frameDelay * i, frameRate).ticksNumber;
+    const newInPoint = ppro.TickTime.createWithTicks(
+      String(inPoint.ticksNumber + offsetTicks)
+    );
+    headTrimData.push({ item, newInPoint, outPoint });
+  }
+
+  let staggerSuccess = false;
+  project.lockedAccess(() => {
+    staggerSuccess = project.executeTransaction((compoundAction) => {
+      for (const { item, newInPoint, outPoint } of headTrimData) {
+        compoundAction.addAction(item.createSetInPointAction(newInPoint));
+        compoundAction.addAction(item.createSetOutPointAction(outPoint));
+      }
+    }, "Grid Reveal: stagger cells");
+  });
+  if (!staggerSuccess) {
+    throw new Error("Failed to stagger the grid cells.");
+  }
+
+  // --- Transaction D: add a Crop effect to every one of the cellCount copies. ---
   report("Adding Crop effect...");
   // getComponentChain() is async, so fetch every chain before opening the
   // locked transaction below (lockedAccess callbacks must stay synchronous).
@@ -183,7 +270,7 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to add the Crop effect to the grid copies.");
   }
 
-  // --- Transaction C: set each copy's Crop percentages to its cell. ---
+  // --- Transaction E: set each copy's Crop percentages to its cell. ---
   report("Cropping each cell...");
   const cellSize = { w: 100 / cols, h: 100 / rows };
   let cropValueSuccess = false;
@@ -212,52 +299,6 @@ async function buildGrid(config, onProgress) {
   });
   if (!cropValueSuccess) {
     throw new Error("Failed to set the Crop percentages on the grid copies.");
-  }
-
-  // --- Transaction D: reveal keyframes on Opacity for cells 2..N. ---
-  report("Setting reveal timing...");
-  const opacityParams = [];
-  for (const item of cellItems) {
-    const chain = await item.getComponentChain();
-    const opacityComponent = await getOpacityComponent(chain);
-    opacityParams.push(getOpacityLevelParam(opacityComponent));
-  }
-
-  let revealSuccess = false;
-  project.lockedAccess(() => {
-    revealSuccess = project.executeTransaction((compoundAction) => {
-      for (let i = 1; i < cellCount; i += 1) {
-        const param = opacityParams[i];
-        const revealFrame = i * frameDelay;
-        const revealTime = frameToTickTime(revealFrame, frameRate);
-
-        compoundAction.addAction(param.createSetTimeVaryingAction(true));
-
-        const hiddenKeyframe = param.createKeyframe(0);
-        hiddenKeyframe.position = ppro.TickTime.TIME_ZERO;
-        compoundAction.addAction(param.createAddKeyframeAction(hiddenKeyframe));
-
-        const visibleKeyframe = param.createKeyframe(100);
-        visibleKeyframe.position = revealTime;
-        compoundAction.addAction(param.createAddKeyframeAction(visibleKeyframe));
-
-        compoundAction.addAction(
-          param.createSetInterpolationAtKeyframeAction(
-            ppro.TickTime.TIME_ZERO,
-            ppro.Constants.InterpolationMode.HOLD
-          )
-        );
-        compoundAction.addAction(
-          param.createSetInterpolationAtKeyframeAction(
-            revealTime,
-            ppro.Constants.InterpolationMode.HOLD
-          )
-        );
-      }
-    }, "Grid Reveal: reveal keyframes");
-  });
-  if (!revealSuccess) {
-    throw new Error("Failed to set the reveal keyframes on the grid copies.");
   }
 
   const lastTrack = originalTrackIndex + cellCount;
