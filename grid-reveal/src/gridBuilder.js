@@ -63,6 +63,7 @@ const {
 } = require("./premiereHelpers");
 const { computeRevealGroups, groupIndexByCell } = require("./revealOrder");
 const { isOutlineAvailable, addGridOutline } = require("./gridOutline");
+const { addFlashEffect } = require("./flashEffect");
 
 /**
  * @param {object} config
@@ -73,6 +74,7 @@ const { isOutlineAvailable, addGridOutline } = require("./gridOutline");
  * @param {boolean} config.reverseOrder - reveal the steps last-to-first
  * @param {boolean} config.gridOutline - overlay grid outline PNG for the reveal duration
  * @param {string} config.outlineColor - "Black" | "White"
+ * @param {boolean} config.flash - white flash (Levels) on each cell as it appears
  * @param {(status: string) => void} onProgress - called with short status strings
  */
 async function buildGrid(config, onProgress) {
@@ -370,6 +372,12 @@ async function buildGrid(config, onProgress) {
   });
   if (!cropValueSuccess) {
     throw new Error("Failed to set the Crop percentages on the grid copies.");
+  }
+
+  // --- Optional: a brief white flash (Levels, White Input Level 80 -> 255
+  // over 1 frame) on every grid cell, timed to each cell's own start. ---
+  if (config.flash) {
+    await addFlashEffect(project, cellItems, frameRate, report);
   }
 
   // --- Optional: overlay a grid outline PNG on its own track, for exactly

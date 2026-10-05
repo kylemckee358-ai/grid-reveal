@@ -41,6 +41,12 @@ Select a clip, click one button, and it:
    track, spanning exactly the reveal window (same start as the grid, same
    end as the split point) — so the grid lines are visible while it's
    assembling, then disappear once it converges.
+8. If **Flash** is checked, every grid cell (not the continuation) gets a
+   Levels effect with its White Input Level keyframed from 80 at the cell's
+   own start up to 255 one frame later — a quick blown-out flash that
+   settles to normal right as each cell pops in. Keyframe positions on a
+   component param are relative to the clip's own start, so this lines up
+   automatically with each cell's staggered start, no extra math needed.
 
 The result: cells pop in by step, `frameDelay` frames apart, each showing a
 short, slightly later window of the same footage, all converging together
@@ -133,6 +139,14 @@ clip either way.
   later (say, a 5x5), they need to be dropped into `Grid Outlines/` named
   exactly `Black 5 x 5 Grid.png` / `White 5 x 5 Grid.png`, and `AVAILABLE_SIZES`
   in `src/gridOutline.js` needs `5` added to it.
+- **Flash is per-cell, not global.** A single flash over the *entire*
+  composited grid at once would need an adjustment layer, and Premiere's
+  current scripting API has no supported way to add effects to one — so
+  instead, every cell gets its own Levels effect, each flashing right as
+  that cell appears. The continuation clip is left out, same as Crop.
+  80 → 255 and the 1-frame duration are fixed in `src/flashEffect.js` for
+  now (`FLASH_START_VALUE`, `FLASH_END_VALUE`, `FLASH_DURATION_FRAMES`) —
+  not exposed as panel fields yet.
 
 ## Changing the defaults
 

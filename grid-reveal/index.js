@@ -9,6 +9,7 @@ const reverseOrderInput = document.getElementById("reverse-order");
 const gridOutlineInput = document.getElementById("grid-outline");
 const outlineColorInput = document.getElementById("outline-color");
 const outlineNoteEl = document.getElementById("outline-note");
+const flashInput = document.getElementById("flash");
 const buildButton = document.getElementById("build-button");
 const statusEl = document.getElementById("status");
 
@@ -72,10 +73,11 @@ buildButton.addEventListener("click", async () => {
   const reverseOrder = reverseOrderInput.checked;
   const gridOutline = gridOutlineInput.checked;
   const outlineColor = outlineColorInput.value;
+  const flash = flashInput.checked;
 
   try {
     const resultMessage = await buildGrid(
-      { rows, cols, frameDelay, revealOrder, reverseOrder, gridOutline, outlineColor },
+      { rows, cols, frameDelay, revealOrder, reverseOrder, gridOutline, outlineColor, flash },
       (progress) => {
         setStatus(progress);
       }
