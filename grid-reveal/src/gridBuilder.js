@@ -22,6 +22,13 @@
  *      the Crop Left/Top/Right/Bottom controls built into the clip's own
  *      Motion effect - current Premiere versions fold cropping into Motion
  *      rather than exposing it as a separate addable effect.
+ *   5. If the selected clip runs longer than the split-point window, cell 0
+ *      itself gets split there too: its own out point is pulled back to the
+ *      split point (cropped, like every other cell), and a second, entirely
+ *      uncropped clone of the original picks up right where it left off -
+ *      so once the grid finishes assembling, it hands off to the full,
+ *      uncropped frame playing on for the rest of the clip, rather than
+ *      staying locked into cell 0's small corner forever.
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
@@ -225,6 +232,40 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to stagger the grid cells.");
   }
 
+  // --- Transaction C: if the selected clip runs past the split point,
+  // continue the full, uncropped footage from there. Cloned from `original`
+  // while it's still untouched (full length), placed on the last cell's
+  // track right after that cell's own clip ends (confirmed empty by the
+  // earlier track check), picking up exactly where the grid converges. Then
+  // cell 0's own out point is pulled back to the split point to match,
+  // leaving a seamless handoff with no gap or overlap. Skipped entirely if
+  // the clip doesn't run past the split point. ---
+  if (originalDurationTicks > requiredDurationTicks) {
+    report("Adding post-reveal continuation...");
+    const continuationOffset = ppro.TickTime.createWithTicks(
+      String(requiredDurationTicks)
+    );
+
+    let continuationSuccess = false;
+    project.lockedAccess(() => {
+      continuationSuccess = project.executeTransaction((compoundAction) => {
+        const continuationClone = sequenceEditor.createCloneTrackItemAction(
+          original,
+          continuationOffset, // shift forward by the split-point window
+          cellCount - 1, // same track as the last grid cell
+          0,
+          true,
+          false
+        );
+        compoundAction.addAction(continuationClone);
+        compoundAction.addAction(original.createSetOutPointAction(splitPoint));
+      }, "Grid Reveal: continue full footage after reveal");
+    });
+    if (!continuationSuccess) {
+      throw new Error("Failed to add the post-reveal continuation clip.");
+    }
+  }
+
   // --- Locate each cell's Motion component and its built-in Crop params.
   // No separate effect needs adding - Motion is always present, and current
   // Premiere versions carry Crop Left/Top/Right/Bottom directly on it. ---
@@ -288,7 +329,14 @@ async function buildGrid(config, onProgress) {
   }
 
   const lastTrack = originalTrackIndex + cellCount;
-  return `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastTrack}.`;
+  const continuationNote =
+    originalDurationTicks > requiredDurationTicks
+      ? ` Full footage continues on V${lastTrack} after the reveal.`
+      : "";
+  return (
+    `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastTrack}.` +
+    continuationNote
+  );
 }
 
 module.exports = { buildGrid };

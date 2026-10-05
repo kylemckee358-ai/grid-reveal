@@ -3,8 +3,8 @@
 A Premiere Pro panel that turns one clip into a staggered grid of itself.
 Select a clip, click one button, and it:
 
-1. Cell 1 (top-left) is the clip itself, completely untouched — full length,
-   nothing trimmed.
+1. Cell 1 (top-left) starts out as the clip itself, full length, nothing
+   trimmed.
 2. Clones it onto the 8 tracks above it.
 3. Defines a shared "split point" 18 frames (`frameDelay x cellCount`) after
    the clip's start. Every clone's end gets pulled back to that same split
@@ -12,16 +12,22 @@ Select a clip, click one button, and it:
    1 loses 2 frames, clone 2 loses 4, clone 3 loses 6, ...) — because
    trimming a clip's head moves its timeline start forward while its end
    stays put, this staggers every clone's start time while all 8 of them end
-   together, exactly when cell 1 (still playing its full length) reaches
-   that same split-point frame.
-4. Crops each of the 9 cells to its 1/9 of the frame (top-left, top-middle,
-   top-right, middle-left, ...).
+   together, exactly at the split-point frame.
+4. If the clip runs longer than the split point, a second, untouched clone
+   of the original picks up right where cell 1 leaves off — then cell 1's
+   own end gets pulled back to the split point too, same as the other 8
+   cells. So cell 1 only carries the crop up to the split point; after that,
+   this new continuation clip takes over, full-frame, uncropped, for the
+   rest of the footage.
+5. Crops cells 1-9 (not the continuation) to their 1/9 of the frame
+   (top-left, top-middle, top-right, middle-left, ...).
 
-The result: cell 1 plays continuously from the start. The other 8 cells pop
-in one at a time, 2 frames apart, each showing a short, slightly later
-window of the same footage, converging together — and with cell 1 — at the
-split-point frame. No opacity animation needed anywhere; the reveal timing
-comes entirely from where each clip starts and ends.
+The result: the 9 cells pop in one at a time, 2 frames apart, each showing a
+short, slightly later window of the same footage, all converging together
+at the split-point frame — and right at that instant, the view snaps to the
+full, uncropped frame and keeps playing normally for the rest of the clip.
+No opacity animation needed anywhere; the reveal timing comes entirely from
+where each clip starts and ends.
 
 ## What you need
 
@@ -57,8 +63,8 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 1. On your timeline, select the one clip you want to turn into a grid. It
    needs to be at least `frameDelay x cellCount` frames long (18 frames for
    the 3x3 default) so there's room for the split point — if it's shorter,
-   the panel will tell you and stop. If it's longer, that's fine: cell 1
-   keeps playing for the clip's full length regardless.
+   the panel will tell you and stop. If it's longer, the extra footage
+   automatically continues, full-frame, after the grid finishes revealing.
 2. Make sure there are enough **empty video tracks directly above it** —
    for the default 3x3 grid, that's 8 empty tracks above the clip's own
    track (9 total). If there aren't enough, the panel will tell you exactly
@@ -70,10 +76,11 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
 
-**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) three times. The grid build
-happens as three grouped steps — clone the clip, stagger the clones, set
-each cell's Crop values — so three undos fully reverts back to your
-original single clip.
+**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) three or four times (four
+if your clip ran long enough to get a continuation clip, three if not). The
+grid build happens as that many grouped steps — clone the clip, stagger the
+clones, add the continuation if needed, set each cell's Crop values — so a
+few undos fully reverts back to your original single clip.
 
 ## Things to know
 
