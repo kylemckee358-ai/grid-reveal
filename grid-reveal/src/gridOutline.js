@@ -24,10 +24,19 @@ function outlineFileName(size, color) {
   return `${color} ${size} x ${size} Grid.png`;
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Finds an existing project item by exact name under the project root, or
  * imports the file fresh if it isn't there yet - avoids re-importing (and
  * cluttering the Project panel with duplicates) on repeat runs.
+ *
+ * importFiles() can resolve successfully before the new item is actually
+ * visible via getItems() yet - Premiere's own import pipeline runs behind
+ * it - so after a successful import, the project root is re-checked a
+ * handful of times with short waits in between rather than just once.
  */
 async function findOrImportProjectItem(project, filePath, fileName) {
   const rootItem = await project.getRootItem();
@@ -40,15 +49,22 @@ async function findOrImportProjectItem(project, filePath, fileName) {
   const imported = await project.importFiles(
     [filePath],
     true, // suppressUI
-    null, // targetBin - project root
+    rootItem, // targetBin - explicit project root
     false // importAsNumberedStills
   );
   if (!imported) {
     throw new Error(`Failed to import grid outline asset: ${fileName}`);
   }
 
-  const itemsAfterImport = await rootItem.getItems();
-  const newItem = itemsAfterImport.find((item) => item.name === fileName);
+  let newItem = null;
+  const maxAttempts = 10;
+  for (let attempt = 0; attempt < maxAttempts && !newItem; attempt += 1) {
+    if (attempt > 0) {
+      await wait(300);
+    }
+    const itemsAfterImport = await rootItem.getItems();
+    newItem = itemsAfterImport.find((item) => item.name === fileName);
+  }
   if (!newItem) {
     throw new Error(`Imported ${fileName} but couldn't find it in the project.`);
   }
