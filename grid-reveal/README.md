@@ -3,22 +3,25 @@
 A Premiere Pro panel that turns one clip into a staggered grid of itself.
 Select a clip, click one button, and it:
 
-1. Trims the clip down to exactly `frameDelay x cellCount` frames (18 frames
-   for the default 3x3 grid at a 2-frame delay) — this becomes cell 1
-   (top-left), on the clip's own track.
+1. Cell 1 (top-left) is the clip itself, completely untouched — full length,
+   nothing trimmed.
 2. Clones it onto the 8 tracks above it.
-3. Trims each clone's head forward by 2 more frames than the last (clone 1
-   loses 2 frames, clone 2 loses 4, clone 3 loses 6, ...) — because trimming
-   a clip's head moves its timeline start forward while its end stays put,
-   this staggers every cell's start time while all 9 keep ending on the
-   exact same frame.
+3. Defines a shared "split point" 18 frames (`frameDelay x cellCount`) after
+   the clip's start. Every clone's end gets pulled back to that same split
+   point, and its head trimmed forward by 2 more frames than the last (clone
+   1 loses 2 frames, clone 2 loses 4, clone 3 loses 6, ...) — because
+   trimming a clip's head moves its timeline start forward while its end
+   stays put, this staggers every clone's start time while all 8 of them end
+   together, exactly when cell 1 (still playing its full length) reaches
+   that same split-point frame.
 4. Crops each of the 9 cells to its 1/9 of the frame (top-left, top-middle,
    top-right, middle-left, ...).
 
-The result: cells pop in one at a time, 2 frames apart, each showing
-slightly later footage than the one before it, and all 9 converge on the
-same final frame at the same instant — no opacity animation needed, the
-reveal timing comes entirely from where each clip starts.
+The result: cell 1 plays continuously from the start. The other 8 cells pop
+in one at a time, 2 frames apart, each showing a short, slightly later
+window of the same footage, converging together — and with cell 1 — at the
+split-point frame. No opacity animation needed anywhere; the reveal timing
+comes entirely from where each clip starts and ends.
 
 ## What you need
 
@@ -53,8 +56,9 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 
 1. On your timeline, select the one clip you want to turn into a grid. It
    needs to be at least `frameDelay x cellCount` frames long (18 frames for
-   the 3x3 default) — if it's longer, the extra gets trimmed off the end
-   automatically; if it's shorter, the panel will tell you and stop.
+   the 3x3 default) so there's room for the split point — if it's shorter,
+   the panel will tell you and stop. If it's longer, that's fine: cell 1
+   keeps playing for the clip's full length regardless.
 2. Make sure there are enough **empty video tracks directly above it** —
    for the default 3x3 grid, that's 8 empty tracks above the clip's own
    track (9 total). If there aren't enough, the panel will tell you exactly
@@ -66,11 +70,10 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
 
-**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) up to five times (fewer if
-your clip didn't need trimming to start with). The grid build happens as a
-handful of grouped steps — trim the base clip, clone it, stagger the clones,
-add the Crop effect, set each crop region — so a few undos fully reverts
-back to your original single clip.
+**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) four times. The grid build
+happens as four grouped steps — clone the clip, stagger the clones, add the
+Crop effect, set each crop region — so four undos fully reverts back to
+your original single clip.
 
 ## Things to know
 

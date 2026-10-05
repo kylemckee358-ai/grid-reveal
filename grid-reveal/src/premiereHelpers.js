@@ -40,6 +40,38 @@ async function resolveMatchName(preferredMatchName, nameContains) {
 }
 
 /**
+ * Finds a component in a chain by its match name (not by index - component
+ * chain order/length isn't something we should assume).
+ */
+async function findComponentByMatchName(componentChain, matchName) {
+  const count = componentChain.getComponentCount();
+  for (let i = 0; i < count; i += 1) {
+    const component = componentChain.getComponentAtIndex(i);
+    const name = await component.getMatchName();
+    if (name === matchName) {
+      return component;
+    }
+  }
+  return null;
+}
+
+/**
+ * Finds a param on a component by display name (case-insensitive), not by
+ * index - param order isn't something we should assume either.
+ */
+function findParamByDisplayName(component, displayName) {
+  const count = component.getParamCount();
+  const needle = displayName.toLowerCase();
+  for (let i = 0; i < count; i += 1) {
+    const param = component.getParam(i);
+    if ((param.displayName || "").toLowerCase() === needle) {
+      return param;
+    }
+  }
+  return null;
+}
+
+/**
  * Converts a frame number (at the sequence's frame rate) to a TickTime.
  */
 function frameToTickTime(frameNumber, frameRate) {
@@ -57,6 +89,8 @@ module.exports = {
   ppro,
   getSelectedVideoClipTrackItems,
   resolveMatchName,
+  findComponentByMatchName,
+  findParamByDisplayName,
   frameToTickTime,
   ticksEqual,
 };

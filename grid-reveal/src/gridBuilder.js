@@ -4,21 +4,28 @@
  * Takes the single selected clip and builds `rows x cols` staggered,
  * cropped copies of it:
  *
- *   1. The selected clip is trimmed down to exactly `frameDelay * cellCount`
- *      frames (e.g. 2 * 9 = 18), keeping its existing in-point. This becomes
- *      cell 0 (top-left) - the longest piece, on the clip's own track.
- *   2. It's cloned onto the (cellCount - 1) tracks above it.
- *   3. Each clone's head is trimmed forward by `frameDelay * cellIndex`
- *      frames (clone 1 loses the first 2 frames, clone 2 the first 4, ...),
- *      which - because trimming a head moves the timeline start forward
- *      while leaving the end anchored - staggers every piece's start time
- *      while all 9 keep ending on the exact same timeline frame, showing
- *      the exact same final source frame.
- *   4. Each of the 9 pieces gets a Crop effect isolating its 1/9 of the
- *      frame (row-major: cell 0 = top-left, ... last cell = bottom-right).
+ *   1. Cell 0 (top-left) is the selected clip itself, completely untouched -
+ *      full original length, full original in/out points.
+ *   2. It's cloned onto the (cellCount - 1) tracks above it, each clone
+ *      initially identical to the original.
+ *   3. A shared "split point" is defined at `frameDelay * cellCount` frames
+ *      (e.g. 2 * 9 = 18) after cell 0's start. Every clone (cells 1..N) gets
+ *      its OUT point pulled back to that same split point, and its IN point
+ *      pushed forward by `frameDelay * cellIndex` frames (clone 1 loses the
+ *      first 2 frames, clone 2 the first 4, ...). Because a head-trim moves
+ *      a clip's timeline start forward while its end stays anchored, this
+ *      staggers every clone's start time while all of them end together,
+ *      exactly at the moment cell 0 (still playing its full length) reaches
+ *      the split point itself.
+ *   4. Each of the cellCount pieces gets a Crop effect isolating its 1/N of
+ *      the frame (row-major: cell 0 = top-left, ... last cell = bottom-right).
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
+ *
+ * The Crop component and its Left/Top/Right/Bottom params are looked up by
+ * match name / display name at runtime rather than assumed by index, since
+ * component-chain order isn't something the API guarantees.
  *
  * Known simplification: frame-offset math assumes the source clip's native
  * frame rate matches the sequence's frame rate. If they differ, trim amounts
@@ -29,14 +36,14 @@ const {
   ppro,
   getSelectedVideoClipTrackItems,
   resolveMatchName,
+  findComponentByMatchName,
+  findParamByDisplayName,
   frameToTickTime,
   ticksEqual,
 } = require("./premiereHelpers");
 
 const CROP_PREFERRED_MATCH_NAME = "AE.ADBE AECrop";
 const CROP_NAME_FALLBACK_SEARCH = "crop";
-// Index to insert Crop at: 0 = Motion, 1 = Opacity are always present first.
-const CROP_INSERT_INDEX = 2;
 
 /**
  * @param {object} config
@@ -141,27 +148,7 @@ async function buildGrid(config, onProgress) {
 
   const sequenceEditor = ppro.SequenceEditor.getEditor(sequence);
 
-  // --- Transaction A: trim the original clip down to exactly the required
-  // window if it's longer (keeps its in-point, pulls the out-point in). ---
-  if (originalDurationTicks > requiredDurationTicks) {
-    report("Trimming base clip...");
-    const originalInPoint = await original.getInPoint();
-    const newOutTicks =
-      originalInPoint.ticksNumber + requiredDurationTicks;
-    const newOutPoint = ppro.TickTime.createWithTicks(String(newOutTicks));
-
-    let trimSuccess = false;
-    project.lockedAccess(() => {
-      trimSuccess = project.executeTransaction((compoundAction) => {
-        compoundAction.addAction(original.createSetOutPointAction(newOutPoint));
-      }, "Grid Reveal: trim base clip");
-    });
-    if (!trimSuccess) {
-      throw new Error("Failed to trim the selected clip to the required length.");
-    }
-  }
-
-  // --- Transaction B: clone the (now correctly-sized) clip onto the
+  // --- Transaction A: clone the original clip, untouched, onto the
   // (cellCount - 1) tracks above it, at the same position. ---
   report(`Cloning clip onto ${cellCount - 1} tracks...`);
   let cloneSuccess = false;
@@ -170,7 +157,7 @@ async function buildGrid(config, onProgress) {
       for (let k = 1; k < cellCount; k += 1) {
         const cloneAction = sequenceEditor.createCloneTrackItemAction(
           original,
-          ppro.TickTime.TIME_ZERO, // no time offset - same position as the (trimmed) original
+          ppro.TickTime.TIME_ZERO, // no time offset - same position as the original
           k, // video track offset, relative to original's track
           0, // audio track offset - see README note on linked audio
           true, // alignToVideo
@@ -185,9 +172,8 @@ async function buildGrid(config, onProgress) {
   }
 
   // --- Re-query: find the real clip on each of the cellCount tracks. At
-  // this point all of them still share the same (trimmed) start time. ---
+  // this point all of them still share the original's start time. ---
   report("Locating clones...");
-  const trimmedStart = await original.getStartTime();
   const cellItems = [];
   for (let k = 0; k < cellCount; k += 1) {
     const trackIndex = originalTrackIndex + k;
@@ -199,7 +185,7 @@ async function buildGrid(config, onProgress) {
     let found = null;
     for (const item of items) {
       const itemStart = await item.getStartTime();
-      if (ticksEqual(itemStart, trimmedStart)) {
+      if (ticksEqual(itemStart, originalStart)) {
         found = item;
         break;
       }
@@ -213,21 +199,24 @@ async function buildGrid(config, onProgress) {
     cellItems.push(found);
   }
 
-  // --- Transaction C: stagger cells 1..N by trimming each one's head
-  // forward by (frameDelay * cellIndex) frames. Out-point is resent
-  // unchanged alongside it, matching Adobe's own sample pattern for
-  // trim actions (both in and out points set together). ---
+  // --- Transaction B: stagger cells 1..N. Every clone's OUT point gets
+  // pulled back to the shared split point (cell 0's in-point + the required
+  // window), and its IN point pushed forward by (frameDelay * cellIndex)
+  // frames - both set together, matching Adobe's own sample pattern for
+  // trim actions. Cell 0 itself is never touched. ---
   report("Staggering cells...");
+  const originalInPoint = await original.getInPoint();
+  const splitPointTicks = originalInPoint.ticksNumber + requiredDurationTicks;
+  const splitPoint = ppro.TickTime.createWithTicks(String(splitPointTicks));
+
   const headTrimData = [];
   for (let i = 1; i < cellCount; i += 1) {
     const item = cellItems[i];
-    const inPoint = await item.getInPoint();
-    const outPoint = await item.getOutPoint();
     const offsetTicks = frameToTickTime(frameDelay * i, frameRate).ticksNumber;
     const newInPoint = ppro.TickTime.createWithTicks(
-      String(inPoint.ticksNumber + offsetTicks)
+      String(originalInPoint.ticksNumber + offsetTicks)
     );
-    headTrimData.push({ item, newInPoint, outPoint });
+    headTrimData.push({ item, newInPoint, outPoint: splitPoint });
   }
 
   let staggerSuccess = false;
@@ -243,7 +232,9 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to stagger the grid cells.");
   }
 
-  // --- Transaction D: add a Crop effect to every one of the cellCount copies. ---
+  // --- Transaction C: add a Crop effect to every one of the cellCount copies.
+  // Appended to the end of each chain - no assumption about how many fixed
+  // components (Motion, Opacity, ...) come before it. ---
   report("Adding Crop effect...");
   // getComponentChain() is async, so fetch every chain before opening the
   // locked transaction below (lockedAccess callbacks must stay synchronous).
@@ -258,11 +249,7 @@ async function buildGrid(config, onProgress) {
         const cropComponent = ppro.VideoFilterFactory.createComponent(
           cropMatchName
         );
-        const insertAction = chain.createInsertComponentAction(
-          cropComponent,
-          CROP_INSERT_INDEX
-        );
-        compoundAction.addAction(insertAction);
+        compoundAction.addAction(chain.createAppendComponentAction(cropComponent));
       }
     }, "Grid Reveal: add Crop");
   });
@@ -270,7 +257,35 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to add the Crop effect to the grid copies.");
   }
 
-  // --- Transaction E: set each copy's Crop percentages to its cell. ---
+  // --- Re-resolve: find the Crop component we just added on each chain by
+  // match name, and its Left/Top/Right/Bottom params by display name -
+  // chain/param order isn't something the API guarantees, so we look each
+  // one up rather than assume a position. ---
+  report("Locating Crop params...");
+  const cropParamSets = [];
+  for (const chain of componentChains) {
+    const cropComponent = await findComponentByMatchName(chain, cropMatchName);
+    if (!cropComponent) {
+      throw new Error(
+        `Added a Crop effect but couldn't find it again on the component chain. ` +
+          `Undo (Ctrl+Z / Cmd+Z) and try again.`
+      );
+    }
+    const paramNames = ["Left", "Top", "Right", "Bottom"];
+    const params = paramNames.map((name) =>
+      findParamByDisplayName(cropComponent, name)
+    );
+    const missing = paramNames.filter((_, idx) => !params[idx]);
+    if (missing.length > 0) {
+      throw new Error(
+        `The Crop effect on your Premiere version doesn't expose a "${missing[0]}" ` +
+          `parameter by that name. Let me know and I'll adjust the lookup.`
+      );
+    }
+    cropParamSets.push(params);
+  }
+
+  // --- Transaction D: set each copy's Crop percentages to its cell. ---
   report("Cropping each cell...");
   const cellSize = { w: 100 / cols, h: 100 / rows };
   let cropValueSuccess = false;
@@ -279,20 +294,23 @@ async function buildGrid(config, onProgress) {
       for (let i = 0; i < cellCount; i += 1) {
         const row = Math.floor(i / cols);
         const col = i % cols;
-        const chain = componentChains[i];
-        const cropComponent = chain.getComponentAtIndex(CROP_INSERT_INDEX);
+        const [leftParam, topParam, rightParam, bottomParam] = cropParamSets[i];
 
         const left = col * cellSize.w;
         const top = row * cellSize.h;
         const right = (cols - 1 - col) * cellSize.w;
         const bottom = (rows - 1 - row) * cellSize.h;
-        const values = [left, top, right, bottom];
+        const params = [
+          [leftParam, left],
+          [topParam, top],
+          [rightParam, right],
+          [bottomParam, bottom],
+        ];
 
-        for (let paramIndex = 0; paramIndex < 4; paramIndex += 1) {
-          const param = cropComponent.getParam(paramIndex);
-          const keyframe = param.createKeyframe(values[paramIndex]);
-          const setValueAction = param.createSetValueAction(keyframe, true);
-          compoundAction.addAction(setValueAction);
+        for (const [param, value] of params) {
+          compoundAction.addAction(param.createSetTimeVaryingAction(false));
+          const keyframe = param.createKeyframe(value);
+          compoundAction.addAction(param.createSetValueAction(keyframe, true));
         }
       }
     }, "Grid Reveal: set crop percentages");
