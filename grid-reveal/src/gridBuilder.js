@@ -36,6 +36,10 @@
  *      clip's own Motion effect - current Premiere versions fold cropping
  *      into Motion rather than exposing it as a separate addable effect.
  *      The continuation clone is left untouched - full frame, uncropped.
+ *   7. Optionally (config.gridOutline), a pre-made grid-outline PNG is
+ *      placed on one more dedicated track, spanning just the reveal window
+ *      (see gridOutline.js) - only available for square grids with a
+ *      matching asset (2x2, 3x3, 4x4).
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
@@ -58,6 +62,7 @@ const {
   ticksEqual,
 } = require("./premiereHelpers");
 const { computeRevealGroups, groupIndexByCell } = require("./revealOrder");
+const { isOutlineAvailable, addGridOutline } = require("./gridOutline");
 
 /**
  * @param {object} config
@@ -66,6 +71,8 @@ const { computeRevealGroups, groupIndexByCell } = require("./revealOrder");
  * @param {number} config.frameDelay - frames between each reveal step
  * @param {string} config.revealOrder - "sequential" | "spiral" | "horizontal" | "vertical"
  * @param {boolean} config.reverseOrder - reveal the steps last-to-first
+ * @param {boolean} config.gridOutline - overlay grid outline PNG for the reveal duration
+ * @param {string} config.outlineColor - "Black" | "White"
  * @param {(status: string) => void} onProgress - called with short status strings
  */
 async function buildGrid(config, onProgress) {
@@ -74,6 +81,15 @@ async function buildGrid(config, onProgress) {
   const frameDelay = config.frameDelay;
   const cellCount = rows * cols;
   const report = onProgress || (() => {});
+  const wantsOutline = Boolean(config.gridOutline);
+
+  if (wantsOutline && !isOutlineAvailable(rows, cols)) {
+    throw new Error(
+      `Grid outlines are only available for square grids (2x2, 3x3, 4x4) - ` +
+        `${rows}x${cols} doesn't have a matching overlay. Uncheck "Grid outlines" ` +
+        `or change rows/columns to match.`
+    );
+  }
 
   const groups = computeRevealGroups(
     rows,
@@ -127,22 +143,29 @@ async function buildGrid(config, onProgress) {
   }
 
   const needsContinuation = originalDurationTicks > requiredDurationTicks;
-  const tracksNeeded = cellCount + (needsContinuation ? 1 : 0);
   const continuationTrackOffset = cellCount; // one past the last grid cell
+  const outlineTrackOffset = cellCount + (needsContinuation ? 1 : 0); // one past that
+  const tracksNeeded =
+    cellCount + (needsContinuation ? 1 : 0) + (wantsOutline ? 1 : 0);
 
   // --- Step 2: is there enough room above the clip's own track for all of
-  // that (the grid cells, plus the continuation track if needed)? ---
+  // that (the grid cells, plus the continuation track and/or outline track
+  // if needed)? ---
   const videoTrackCount = await sequence.getVideoTrackCount();
   const requiredTrackCount = originalTrackIndex + tracksNeeded;
 
   if (videoTrackCount < requiredTrackCount) {
     const tracksToAdd = requiredTrackCount - videoTrackCount;
-    const continuationNote = needsContinuation
-      ? ` (${cellCount} for the grid, plus 1 more for the full-footage continuation after it)`
-      : "";
+    const extras = [];
+    if (needsContinuation) extras.push("1 for the full-footage continuation");
+    if (wantsOutline) extras.push("1 for the grid outline overlay");
+    const extraNote =
+      extras.length > 0
+        ? ` (${cellCount} for the grid, plus ${extras.join(" and ")})`
+        : "";
     throw new Error(
       `Not enough video tracks. This sequence has ${videoTrackCount}, but the ` +
-        `${rows}x${cols} grid needs ${requiredTrackCount}${continuationNote} (your clip is on track ` +
+        `${rows}x${cols} grid needs ${requiredTrackCount}${extraNote} (your clip is on track ` +
         `V${originalTrackIndex + 1}). Right-click the track header area, choose ` +
         `"Add Tracks", add ${tracksToAdd} video track(s), then click 3x3 Grid again.`
     );
@@ -349,13 +372,32 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to set the Crop percentages on the grid copies.");
   }
 
+  // --- Optional: overlay a grid outline PNG on its own track, for exactly
+  // the reveal window (same start as the grid, same end as the split
+  // point). Runs last, after the grid itself is fully built. ---
+  if (wantsOutline) {
+    await addGridOutline(project, sequence, {
+      rows,
+      cols,
+      color: config.outlineColor || "White",
+      trackIndex: originalTrackIndex + outlineTrackOffset,
+      startTime: originalStart,
+      endTime: splitPoint,
+      report,
+    });
+  }
+
   const lastGridTrack = originalTrackIndex + cellCount;
-  const continuationNote = needsContinuation
-    ? ` Full footage continues on V${lastGridTrack + 1} after the reveal.`
-    : "";
+  const notes = [];
+  if (needsContinuation) {
+    notes.push(` Full footage continues on V${originalTrackIndex + continuationTrackOffset + 1} after the reveal.`);
+  }
+  if (wantsOutline) {
+    notes.push(` Grid outline on V${originalTrackIndex + outlineTrackOffset + 1}.`);
+  }
   return (
     `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastGridTrack}.` +
-    continuationNote
+    notes.join("")
   );
 }
 

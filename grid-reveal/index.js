@@ -1,10 +1,14 @@
 const { buildGrid } = require("./src/gridBuilder");
+const { isOutlineAvailable } = require("./src/gridOutline");
 
 const rowsInput = document.getElementById("rows");
 const colsInput = document.getElementById("cols");
 const frameDelayInput = document.getElementById("frame-delay");
 const revealOrderInput = document.getElementById("reveal-order");
 const reverseOrderInput = document.getElementById("reverse-order");
+const gridOutlineInput = document.getElementById("grid-outline");
+const outlineColorInput = document.getElementById("outline-color");
+const outlineNoteEl = document.getElementById("outline-note");
 const buildButton = document.getElementById("build-button");
 const statusEl = document.getElementById("status");
 
@@ -22,9 +26,30 @@ function updateButtonLabel() {
   buildButton.textContent = `${rows}×${cols} Grid`;
 }
 
-rowsInput.addEventListener("input", updateButtonLabel);
-colsInput.addEventListener("input", updateButtonLabel);
+function updateOutlineAvailability() {
+  const rows = parseInt(rowsInput.value, 10) || 0;
+  const cols = parseInt(colsInput.value, 10) || 0;
+  const available = isOutlineAvailable(rows, cols);
+
+  gridOutlineInput.disabled = !available;
+  outlineColorInput.disabled = !available || !gridOutlineInput.checked;
+  if (!available) {
+    gridOutlineInput.checked = false;
+  }
+  outlineNoteEl.hidden = available;
+}
+
+rowsInput.addEventListener("input", () => {
+  updateButtonLabel();
+  updateOutlineAvailability();
+});
+colsInput.addEventListener("input", () => {
+  updateButtonLabel();
+  updateOutlineAvailability();
+});
+gridOutlineInput.addEventListener("input", updateOutlineAvailability);
 updateButtonLabel();
+updateOutlineAvailability();
 
 buildButton.addEventListener("click", async () => {
   const rows = parseInt(rowsInput.value, 10);
@@ -45,10 +70,12 @@ buildButton.addEventListener("click", async () => {
 
   const revealOrder = revealOrderInput.value;
   const reverseOrder = reverseOrderInput.checked;
+  const gridOutline = gridOutlineInput.checked;
+  const outlineColor = outlineColorInput.value;
 
   try {
     const resultMessage = await buildGrid(
-      { rows, cols, frameDelay, revealOrder, reverseOrder },
+      { rows, cols, frameDelay, revealOrder, reverseOrder, gridOutline, outlineColor },
       (progress) => {
         setStatus(progress);
       }

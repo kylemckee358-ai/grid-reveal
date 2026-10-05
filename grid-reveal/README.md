@@ -36,6 +36,11 @@ Select a clip, click one button, and it:
    beginning.
 6. Crops every grid cell (not the continuation) to its fixed 1/N of the
    frame.
+7. If **Grid outlines** is checked, one of the pre-made outline PNGs (see
+   `Grid Outlines/` next to this plugin) is placed on one more dedicated
+   track, spanning exactly the reveal window (same start as the grid, same
+   end as the split point) — so the grid lines are visible while it's
+   assembling, then disappear once it converges.
 
 The result: cells pop in by step, `frameDelay` frames apart, each showing a
 short, slightly later window of the same footage, all converging together
@@ -85,8 +90,9 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
    full-frame, after the grid finishes revealing.
 2. Make sure there are enough **empty video tracks directly above it** —
    for the default 3x3 grid, that's 8 empty tracks for the grid cells, plus
-   1 more if your clip is long enough to need a continuation track (9 or 10
-   total). If there aren't enough, the panel will tell you exactly how many
+   1 more if your clip is long enough to need a continuation track, plus 1
+   more again if Grid outlines is checked (9 to 11 total depending on which
+   apply). If there aren't enough, the panel will tell you exactly how many
    to add: right-click the track header area on the left of the timeline →
    **Add Tracks**.
 3. In the Grid Reveal panel, leave the defaults (3 rows, 3 columns, 2 frame
@@ -95,11 +101,11 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
 5. Done. The status box tells you which tracks got used. Scrub the timeline
    to watch the cells pop in.
 
-**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) three or four times (four
-if your clip ran long enough to get a continuation clip, three if not). The
-grid build happens as that many grouped steps — clone the clip, stagger the
-clones, add the continuation if needed, set each cell's Crop values — so a
-few undos fully reverts back to your original single clip.
+**To undo:** press Ctrl+Z (Windows) / Cmd+Z (Mac) a handful of times — three
+as a baseline (clone, stagger, set Crop values), plus one if a continuation
+clip was added, plus a few more (import/scale, place, trim) if a grid
+outline was added. A few undos fully reverts back to your original single
+clip either way.
 
 ## Things to know
 
@@ -118,6 +124,15 @@ few undos fully reverts back to your original single clip.
   an error mentioning it couldn't find a Crop parameter by name, your
   Premiere version may expose Motion's crop controls differently; let me
   know and I'll adjust the lookup.
+- **Grid outlines** only cover square grids with a matching asset in
+  `Grid Outlines/` — 2x2, 3x3, 4x4, in Black or White. The checkbox
+  disables itself automatically if your rows/columns don't match one of
+  those. The first time you use a given size/color, it gets imported into
+  your Project panel; after that, the same project item is reused rather
+  than importing duplicates on every run. If you add more outline PNGs
+  later (say, a 5x5), they need to be dropped into `Grid Outlines/` named
+  exactly `Black 5 x 5 Grid.png` / `White 5 x 5 Grid.png`, and `AVAILABLE_SIZES`
+  in `src/gridOutline.js` needs `5` added to it.
 
 ## Changing the defaults
 

@@ -91,6 +91,11 @@
         border-top: 1px solid #333;
         margin: 14px 0;
       }
+      .outline-note {
+        font-size: 10px;
+        color: #777;
+        margin: -4px 0 10px;
+      }
     </style>
   </head>
   <body>
@@ -129,6 +134,20 @@
         <option value="fade" disabled>Fade (coming soon)</option>
       </select>
     </div>
+    <div class="field-row">
+      <label for="grid-outline">Grid outlines</label>
+      <input type="checkbox" id="grid-outline" />
+    </div>
+    <div class="field-row">
+      <label for="outline-color">Outline color</label>
+      <select id="outline-color">
+        <option value="White">White</option>
+        <option value="Black">Black</option>
+      </select>
+    </div>
+    <p class="outline-note" id="outline-note">
+      Only available for square grids: 2x2, 3x3, or 4x4.
+    </p>
 
     <hr />
 
