@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width" />
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        font-family: "Adobe Clean", "Segoe UI", sans-serif;
+        font-size: 12px;
+        color: #e6e6e6;
+        background: #1e1e1e;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      p.subtitle {
+        margin: 0 0 16px;
+        color: #a0a0a0;
+      }
+      .field-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        gap: 10px;
+      }
+      .field-row label {
+        flex: 1;
+      }
+      .field-row input,
+      .field-row select {
+        width: 90px;
+        background: #2d2d2d;
+        border: 1px solid #454545;
+        color: #e6e6e6;
+        border-radius: 4px;
+        padding: 4px 6px;
+      }
+      .field-row select:disabled {
+        opacity: 0.5;
+      }
+      .coming-soon {
+        font-size: 10px;
+        color: #777;
+        margin-left: 6px;
+      }
+      #build-button {
+        width: 100%;
+        margin-top: 14px;
+        padding: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        border: none;
+        border-radius: 4px;
+        background: #b4ff00;
+        color: #0a0a0a;
+        cursor: pointer;
+      }
+      #build-button:disabled {
+        background: #555;
+        color: #999;
+        cursor: default;
+      }
+      #status {
+        margin-top: 14px;
+        padding: 8px 10px;
+        border-radius: 4px;
+        background: #2a2a2a;
+        min-height: 36px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+      #status.error {
+        background: #3a1f1f;
+        color: #ff9d9d;
+      }
+      #status.success {
+        background: #1f3a22;
+        color: #b9ffb0;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #333;
+        margin: 14px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Grid Reveal</h1>
+    <p class="subtitle">Select a clip on the timeline, then click 3x3 Grid.</p>
+
+    <div class="field-row">
+      <label for="rows">Rows</label>
+      <input type="number" id="rows" min="2" max="6" value="3" />
+    </div>
+    <div class="field-row">
+      <label for="cols">Columns</label>
+      <input type="number" id="cols" min="2" max="6" value="3" />
+    </div>
+    <div class="field-row">
+      <label for="frame-delay">Frame delay between cells</label>
+      <input type="number" id="frame-delay" min="0" max="60" value="2" />
+    </div>
+    <div class="field-row">
+      <label for="reveal-style">Reveal style</label>
+      <select id="reveal-style">
+        <option value="instant">Instant pop</option>
+        <option value="fade" disabled>Fade (coming soon)</option>
+      </select>
+    </div>
+
+    <hr />
+
+    <button id="build-button">3&times;3 Grid</button>
+
+    <div id="status">Ready.</div>
+
+    <script src="index.js"></script>
+  </body>
+</html>
