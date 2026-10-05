@@ -13,12 +13,14 @@ Select a clip, click one button, and it:
    trimming a clip's head moves its timeline start forward while its end
    stays put, this staggers every clone's start time while all 8 of them end
    together, exactly at the split-point frame.
-4. If the clip runs longer than the split point, a second, untouched clone
-   of the original picks up right where cell 1 leaves off — then cell 1's
-   own end gets pulled back to the split point too, same as the other 8
-   cells. So cell 1 only carries the crop up to the split point; after that,
-   this new continuation clip takes over, full-frame, uncropped, for the
-   rest of the footage.
+4. If the clip runs longer than the split point, one more clone is made on
+   its own dedicated track above the grid. Its head gets trimmed forward by
+   that same 18-frame window (the same trimming move as the other 8, just
+   without capping the far end) — which both moves it to start exactly at
+   the split point *and* makes it continue playing the footage that comes
+   right after, rather than restarting from the beginning. Cell 1's own end
+   gets pulled back to the split point too, same as the other 8 cells, so
+   the handoff is seamless.
 5. Crops cells 1-9 (not the continuation) to their 1/9 of the frame
    (top-left, top-middle, top-right, middle-left, ...).
 
@@ -66,10 +68,11 @@ code — in any of those cases, just reopen UDT and click **Load** again (or
    the panel will tell you and stop. If it's longer, the extra footage
    automatically continues, full-frame, after the grid finishes revealing.
 2. Make sure there are enough **empty video tracks directly above it** —
-   for the default 3x3 grid, that's 8 empty tracks above the clip's own
-   track (9 total). If there aren't enough, the panel will tell you exactly
-   how many to add: right-click the track header area on the left of the
-   timeline → **Add Tracks**.
+   for the default 3x3 grid, that's 8 empty tracks for the grid cells, plus
+   1 more if your clip is long enough to need a continuation track (9 or 10
+   total). If there aren't enough, the panel will tell you exactly how many
+   to add: right-click the track header area on the left of the timeline →
+   **Add Tracks**.
 3. In the Grid Reveal panel, leave the defaults (3 rows, 3 columns, 2 frame
    delay, Instant pop) or change them.
 4. Click **3x3 Grid** (the button relabels itself if you change rows/columns).

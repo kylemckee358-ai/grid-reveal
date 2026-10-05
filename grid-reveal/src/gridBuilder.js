@@ -4,10 +4,11 @@
  * Takes the single selected clip and builds `rows x cols` staggered,
  * cropped copies of it:
  *
- *   1. Cell 0 (top-left) is the selected clip itself, completely untouched -
- *      full original length, full original in/out points.
+ *   1. Cell 0 (top-left) starts out as the selected clip itself, untouched.
  *   2. It's cloned onto the (cellCount - 1) tracks above it, each clone
- *      initially identical to the original.
+ *      initially identical to the original. If the clip runs longer than
+ *      the split-point window (see below), one more clone is made on a
+ *      further, dedicated track - the eventual continuation clip.
  *   3. A shared "split point" is defined at `frameDelay * cellCount` frames
  *      (e.g. 2 * 9 = 18) after cell 0's start. Every clone (cells 1..N) gets
  *      its OUT point pulled back to that same split point, and its IN point
@@ -15,20 +16,21 @@
  *      first 2 frames, clone 2 the first 4, ...). Because a head-trim moves
  *      a clip's timeline start forward while its end stays anchored, this
  *      staggers every clone's start time while all of them end together,
- *      exactly at the moment cell 0 (still playing its full length) reaches
- *      the split point itself.
- *   4. Each of the cellCount pieces gets cropped to its own 1/N of the frame
- *      (row-major: cell 0 = top-left, ... last cell = bottom-right) using
- *      the Crop Left/Top/Right/Bottom controls built into the clip's own
- *      Motion effect - current Premiere versions fold cropping into Motion
- *      rather than exposing it as a separate addable effect.
- *   5. If the selected clip runs longer than the split-point window, cell 0
- *      itself gets split there too: its own out point is pulled back to the
- *      split point (cropped, like every other cell), and a second, entirely
- *      uncropped clone of the original picks up right where it left off -
- *      so once the grid finishes assembling, it hands off to the full,
- *      uncropped frame playing on for the rest of the clip, rather than
- *      staying locked into cell 0's small corner forever.
+ *      at the split point. Cell 0's own OUT point is pulled back to the
+ *      split point too, same as every other cell.
+ *   4. The continuation clone (if any) gets its IN point pushed forward by
+ *      the *full* split-point window (not progressively, like the staggered
+ *      cells) and its OUT point left untouched - so the same head-trim
+ *      mechanism that staggers cells 1..N here instead lands it exactly at
+ *      the split point, still playing the footage that comes right after
+ *      it, for the clip's remaining length. This is what cells 1..N do too,
+ *      just without capping the far end.
+ *   5. Each of the cellCount grid pieces gets cropped to its own 1/N of the
+ *      frame (row-major: cell 0 = top-left, ... last cell = bottom-right)
+ *      using the Crop Left/Top/Right/Bottom controls built into the clip's
+ *      own Motion effect - current Premiere versions fold cropping into
+ *      Motion rather than exposing it as a separate addable effect. The
+ *      continuation clone is left untouched - full frame, uncropped.
  *
  * The reveal itself needs no opacity/keyframe animation at all - a track is
  * simply empty before its piece's (staggered) start time.
@@ -85,24 +87,10 @@ async function buildGrid(config, onProgress) {
   const settings = await sequence.getSettings();
   const frameRate = await settings.getVideoFrameRate();
 
-  // --- Step 1: figure out which track the clip is on, and whether there's
-  // enough room above it for the other (cellCount - 1) copies. ---
+  // --- Step 1: the selected clip must be at least frameDelay * cellCount
+  // frames long - that's the window every staggered piece is carved from.
+  // Figure out, from that, whether a continuation clip will be needed. ---
   const originalTrackIndex = await original.getTrackIndex();
-  const videoTrackCount = await sequence.getVideoTrackCount();
-  const requiredTrackCount = originalTrackIndex + cellCount;
-
-  if (videoTrackCount < requiredTrackCount) {
-    const tracksToAdd = requiredTrackCount - videoTrackCount;
-    throw new Error(
-      `Not enough video tracks. This sequence has ${videoTrackCount}, but the ` +
-        `${rows}x${cols} grid needs ${requiredTrackCount} (your clip is on track ` +
-        `V${originalTrackIndex + 1}). Right-click the track header area, choose ` +
-        `"Add Tracks", add ${tracksToAdd} video track(s), then click 3x3 Grid again.`
-    );
-  }
-
-  // --- Step 2: the selected clip must be at least frameDelay * cellCount
-  // frames long - that's the window every staggered piece is carved from. ---
   const originalStart = await original.getStartTime();
   const originalEnd = await original.getEndTime();
   const requiredDurationFrames = frameDelay * cellCount;
@@ -121,9 +109,31 @@ async function buildGrid(config, onProgress) {
     );
   }
 
+  const needsContinuation = originalDurationTicks > requiredDurationTicks;
+  const tracksNeeded = cellCount + (needsContinuation ? 1 : 0);
+  const continuationTrackOffset = cellCount; // one past the last grid cell
+
+  // --- Step 2: is there enough room above the clip's own track for all of
+  // that (the grid cells, plus the continuation track if needed)? ---
+  const videoTrackCount = await sequence.getVideoTrackCount();
+  const requiredTrackCount = originalTrackIndex + tracksNeeded;
+
+  if (videoTrackCount < requiredTrackCount) {
+    const tracksToAdd = requiredTrackCount - videoTrackCount;
+    const continuationNote = needsContinuation
+      ? ` (${cellCount} for the grid, plus 1 more for the full-footage continuation after it)`
+      : "";
+    throw new Error(
+      `Not enough video tracks. This sequence has ${videoTrackCount}, but the ` +
+        `${rows}x${cols} grid needs ${requiredTrackCount}${continuationNote} (your clip is on track ` +
+        `V${originalTrackIndex + 1}). Right-click the track header area, choose ` +
+        `"Add Tracks", add ${tracksToAdd} video track(s), then click 3x3 Grid again.`
+    );
+  }
+
   // --- Step 3: make sure the tracks we're about to use are actually empty
   // across the clip's full (pre-trim) span, so we never clobber other work. ---
-  for (let k = 1; k < cellCount; k += 1) {
+  for (let k = 1; k < tracksNeeded; k += 1) {
     const targetTrackIndex = originalTrackIndex + k;
     const targetTrack = await sequence.getVideoTrack(targetTrackIndex);
     const existingItems = await targetTrack.getTrackItems(
@@ -139,7 +149,7 @@ async function buildGrid(config, onProgress) {
       if (timeOverlaps) {
         throw new Error(
           `Track V${targetTrackIndex + 1} already has a clip in this time range. ` +
-            `Clear tracks V${originalTrackIndex + 2}-V${originalTrackIndex + cellCount} ` +
+            `Clear tracks V${originalTrackIndex + 2}-V${originalTrackIndex + tracksNeeded} ` +
             `above your clip, then click 3x3 Grid again.`
         );
       }
@@ -148,13 +158,14 @@ async function buildGrid(config, onProgress) {
 
   const sequenceEditor = ppro.SequenceEditor.getEditor(sequence);
 
-  // --- Transaction A: clone the original clip, untouched, onto the
-  // (cellCount - 1) tracks above it, at the same position. ---
-  report(`Cloning clip onto ${cellCount - 1} tracks...`);
+  // --- Transaction A: clone the original clip, untouched, onto the grid
+  // tracks above it, plus the continuation track if needed - all at the
+  // same (current, full-length) position as the original. ---
+  report(`Cloning clip onto ${tracksNeeded} track(s)...`);
   let cloneSuccess = false;
   project.lockedAccess(() => {
     cloneSuccess = project.executeTransaction((compoundAction) => {
-      for (let k = 1; k < cellCount; k += 1) {
+      for (let k = 1; k < tracksNeeded; k += 1) {
         const cloneAction = sequenceEditor.createCloneTrackItemAction(
           original,
           ppro.TickTime.TIME_ZERO, // no time offset - same position as the original
@@ -171,39 +182,53 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to clone the clip onto the grid tracks.");
   }
 
-  // --- Re-query: find the real clip on each of the cellCount tracks. At
-  // this point all of them still share the original's start time. ---
+  // --- Re-query: find the real clip on each track. At this point all of
+  // them still share the original's start time. ---
   report("Locating clones...");
-  const cellItems = [];
-  for (let k = 0; k < cellCount; k += 1) {
-    const trackIndex = originalTrackIndex + k;
+  async function findCloneOnTrack(trackIndex) {
     const track = await sequence.getVideoTrack(trackIndex);
     const items = await track.getTrackItems(
       ppro.Constants.TrackItemType.CLIP,
       false
     );
-    let found = null;
     for (const item of items) {
       const itemStart = await item.getStartTime();
       if (ticksEqual(itemStart, originalStart)) {
-        found = item;
-        break;
+        return item;
       }
     }
+    return null;
+  }
+
+  const cellItems = [];
+  for (let k = 0; k < cellCount; k += 1) {
+    const found = await findCloneOnTrack(originalTrackIndex + k);
     if (!found) {
       throw new Error(
-        `Could not locate the clip copy on track V${trackIndex + 1} after cloning. ` +
+        `Could not locate the clip copy on track V${originalTrackIndex + k + 1} after cloning. ` +
           `Undo (Ctrl+Z / Cmd+Z) and try again.`
       );
     }
     cellItems.push(found);
   }
 
-  // --- Transaction B: stagger cells 1..N. Every clone's OUT point gets
-  // pulled back to the shared split point (cell 0's in-point + the required
-  // window), and its IN point pushed forward by (frameDelay * cellIndex)
-  // frames - both set together, matching Adobe's own sample pattern for
-  // trim actions. Cell 0 itself is never touched. ---
+  let continuationItem = null;
+  if (needsContinuation) {
+    continuationItem = await findCloneOnTrack(
+      originalTrackIndex + continuationTrackOffset
+    );
+    if (!continuationItem) {
+      throw new Error(
+        `Could not locate the continuation clip after cloning. ` +
+          `Undo (Ctrl+Z / Cmd+Z) and try again.`
+      );
+    }
+  }
+
+  // --- Transaction B: stagger cells 1..N and cap cell 0's own end, all to
+  // the same shared split point; trim the continuation clip's head forward
+  // by the full split-point window (same mechanism, just not capped at the
+  // far end) so it picks up exactly where the grid's footage leaves off. ---
   report("Staggering cells...");
   const originalInPoint = await original.getInPoint();
   const splitPointTicks = originalInPoint.ticksNumber + requiredDurationTicks;
@@ -226,49 +251,24 @@ async function buildGrid(config, onProgress) {
         compoundAction.addAction(item.createSetInPointAction(newInPoint));
         compoundAction.addAction(item.createSetOutPointAction(outPoint));
       }
+      // Cell 0 (the original) keeps its start untouched, but its end gets
+      // pulled back to the split point too, same as every other cell.
+      compoundAction.addAction(original.createSetOutPointAction(splitPoint));
+      // The continuation clip: head-trimmed forward by the full window,
+      // out point left alone - same mechanism, just not capped.
+      if (continuationItem) {
+        compoundAction.addAction(continuationItem.createSetInPointAction(splitPoint));
+      }
     }, "Grid Reveal: stagger cells");
   });
   if (!staggerSuccess) {
     throw new Error("Failed to stagger the grid cells.");
   }
 
-  // --- Transaction C: if the selected clip runs past the split point,
-  // continue the full, uncropped footage from there. Cloned from `original`
-  // while it's still untouched (full length), placed on the last cell's
-  // track right after that cell's own clip ends (confirmed empty by the
-  // earlier track check), picking up exactly where the grid converges. Then
-  // cell 0's own out point is pulled back to the split point to match,
-  // leaving a seamless handoff with no gap or overlap. Skipped entirely if
-  // the clip doesn't run past the split point. ---
-  if (originalDurationTicks > requiredDurationTicks) {
-    report("Adding post-reveal continuation...");
-    const continuationOffset = ppro.TickTime.createWithTicks(
-      String(requiredDurationTicks)
-    );
-
-    let continuationSuccess = false;
-    project.lockedAccess(() => {
-      continuationSuccess = project.executeTransaction((compoundAction) => {
-        const continuationClone = sequenceEditor.createCloneTrackItemAction(
-          original,
-          continuationOffset, // shift forward by the split-point window
-          cellCount - 1, // same track as the last grid cell
-          0,
-          true,
-          false
-        );
-        compoundAction.addAction(continuationClone);
-        compoundAction.addAction(original.createSetOutPointAction(splitPoint));
-      }, "Grid Reveal: continue full footage after reveal");
-    });
-    if (!continuationSuccess) {
-      throw new Error("Failed to add the post-reveal continuation clip.");
-    }
-  }
-
-  // --- Locate each cell's Motion component and its built-in Crop params.
-  // No separate effect needs adding - Motion is always present, and current
-  // Premiere versions carry Crop Left/Top/Right/Bottom directly on it. ---
+  // --- Locate each grid cell's Motion component and its built-in Crop
+  // params. No separate effect needs adding - Motion is always present, and
+  // current Premiere versions carry Crop Left/Top/Right/Bottom directly on
+  // it. The continuation clip is deliberately skipped - left uncropped. ---
   report("Locating Crop controls...");
   const paramNames = ["Crop Left", "Crop Top", "Crop Right", "Crop Bottom"];
   const cropParamSets = [];
@@ -294,7 +294,7 @@ async function buildGrid(config, onProgress) {
     cropParamSets.push(params);
   }
 
-  // --- Transaction C: set each cell's Crop percentages. ---
+  // --- Transaction C: set each grid cell's Crop percentages. ---
   report("Cropping each cell...");
   const cellSize = { w: 100 / cols, h: 100 / rows };
   let cropValueSuccess = false;
@@ -328,13 +328,12 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to set the Crop percentages on the grid copies.");
   }
 
-  const lastTrack = originalTrackIndex + cellCount;
-  const continuationNote =
-    originalDurationTicks > requiredDurationTicks
-      ? ` Full footage continues on V${lastTrack} after the reveal.`
-      : "";
+  const lastGridTrack = originalTrackIndex + cellCount;
+  const continuationNote = needsContinuation
+    ? ` Full footage continues on V${lastGridTrack + 1} after the reveal.`
+    : "";
   return (
-    `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastTrack}.` +
+    `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastGridTrack}.` +
     continuationNote
   );
 }
