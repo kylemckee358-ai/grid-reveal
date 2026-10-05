@@ -374,25 +374,41 @@ async function buildGrid(config, onProgress) {
     throw new Error("Failed to set the Crop percentages on the grid copies.");
   }
 
-  // --- Optional: a brief white flash (Levels, White Input Level 80 -> 255
-  // over 1 frame) on every grid cell, timed to each cell's own start. ---
+  // --- Optional add-ons. The grid itself is already fully built by this
+  // point, so each runs independently - a failure in one is reported as a
+  // warning rather than discarding the (successful) other, or the grid. ---
+  const warnings = [];
+  let flashAdded = false;
+  let outlineAdded = false;
+
+  // Flash: a brief white flash (Levels, White Input Level 80 -> 255 over 1
+  // frame) on every grid cell, timed to each cell's own start.
   if (config.flash) {
-    await addFlashEffect(project, cellItems, frameRate, report);
+    try {
+      await addFlashEffect(project, cellItems, frameRate, report);
+      flashAdded = true;
+    } catch (err) {
+      warnings.push(`Flash effect failed: ${err.message}`);
+    }
   }
 
-  // --- Optional: overlay a grid outline PNG on its own track, for exactly
-  // the reveal window (same start as the grid, same end as the split
-  // point). Runs last, after the grid itself is fully built. ---
+  // Grid outline: overlay a grid outline PNG on its own track, for exactly
+  // the reveal window (same start as the grid, same end as the split point).
   if (wantsOutline) {
-    await addGridOutline(project, sequence, {
-      rows,
-      cols,
-      color: config.outlineColor || "White",
-      trackIndex: originalTrackIndex + outlineTrackOffset,
-      startTime: originalStart,
-      endTime: splitPoint,
-      report,
-    });
+    try {
+      await addGridOutline(project, sequence, {
+        rows,
+        cols,
+        color: config.outlineColor || "White",
+        trackIndex: originalTrackIndex + outlineTrackOffset,
+        startTime: originalStart,
+        endTime: splitPoint,
+        report,
+      });
+      outlineAdded = true;
+    } catch (err) {
+      warnings.push(`Grid outline failed: ${err.message}`);
+    }
   }
 
   const lastGridTrack = originalTrackIndex + cellCount;
@@ -400,8 +416,14 @@ async function buildGrid(config, onProgress) {
   if (needsContinuation) {
     notes.push(` Full footage continues on V${originalTrackIndex + continuationTrackOffset + 1} after the reveal.`);
   }
-  if (wantsOutline) {
+  if (outlineAdded) {
     notes.push(` Grid outline on V${originalTrackIndex + outlineTrackOffset + 1}.`);
+  }
+  if (flashAdded) {
+    notes.push(` Flash added.`);
+  }
+  if (warnings.length > 0) {
+    notes.push(` ${warnings.join(" ")}`);
   }
   return (
     `Done. Built a ${rows}x${cols} grid on tracks V${originalTrackIndex + 1}-V${lastGridTrack}.` +

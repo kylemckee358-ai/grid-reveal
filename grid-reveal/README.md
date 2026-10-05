@@ -147,6 +147,11 @@ clip either way.
   80 → 255 and the 1-frame duration are fixed in `src/flashEffect.js` for
   now (`FLASH_START_VALUE`, `FLASH_END_VALUE`, `FLASH_DURATION_FRAMES`) —
   not exposed as panel fields yet.
+- **Flash and Grid outline are independent.** Both run after the grid
+  itself is already fully built, and each is wrapped so a failure in one
+  doesn't stop the other (or touch the grid) — you'll just see a note in
+  the status message naming which one failed and why, while whatever did
+  succeed stays in place.
 
 ## Changing the defaults
 

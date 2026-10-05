@@ -107,12 +107,28 @@ async function addFlashEffect(project, cellItems, frameRate, report) {
   // staggered start with no extra offset math needed.
   const flashEndTime = frameToTickTime(FLASH_DURATION_FRAMES, frameRate);
 
+  // Time-varying has to be committed in its own transaction before
+  // creating keyframes - matching Adobe's own sample pattern, which calls
+  // and awaits createSetTimeVaryingAction(true) as a separate, already-
+  // committed step before ever calling createKeyframe(). Bundling both in
+  // one transaction means the param doesn't know it's time-varying yet at
+  // the moment the keyframe is constructed.
+  let timeVaryingSuccess = false;
+  project.lockedAccess(() => {
+    timeVaryingSuccess = project.executeTransaction((compoundAction) => {
+      for (const param of whiteInputParams) {
+        compoundAction.addAction(param.createSetTimeVaryingAction(true));
+      }
+    }, "Grid Reveal: enable flash keyframing");
+  });
+  if (!timeVaryingSuccess) {
+    throw new Error("Failed to enable keyframing on the flash effect.");
+  }
+
   let keyframeSuccess = false;
   project.lockedAccess(() => {
     keyframeSuccess = project.executeTransaction((compoundAction) => {
       for (const param of whiteInputParams) {
-        compoundAction.addAction(param.createSetTimeVaryingAction(true));
-
         const startKeyframe = param.createKeyframe(FLASH_START_VALUE);
         startKeyframe.position = ppro.TickTime.TIME_ZERO;
         compoundAction.addAction(param.createAddKeyframeAction(startKeyframe));
@@ -120,7 +136,17 @@ async function addFlashEffect(project, cellItems, frameRate, report) {
         const endKeyframe = param.createKeyframe(FLASH_END_VALUE);
         endKeyframe.position = flashEndTime;
         compoundAction.addAction(param.createAddKeyframeAction(endKeyframe));
+      }
+    }, "Grid Reveal: keyframe flash");
+  });
+  if (!keyframeSuccess) {
+    throw new Error("Failed to keyframe the flash effect.");
+  }
 
+  let interpolationSuccess = false;
+  project.lockedAccess(() => {
+    interpolationSuccess = project.executeTransaction((compoundAction) => {
+      for (const param of whiteInputParams) {
         compoundAction.addAction(
           param.createSetInterpolationAtKeyframeAction(
             ppro.TickTime.TIME_ZERO,
@@ -134,10 +160,10 @@ async function addFlashEffect(project, cellItems, frameRate, report) {
           )
         );
       }
-    }, "Grid Reveal: keyframe flash");
+    }, "Grid Reveal: set flash interpolation");
   });
-  if (!keyframeSuccess) {
-    throw new Error("Failed to keyframe the flash effect.");
+  if (!interpolationSuccess) {
+    throw new Error("Failed to set the flash keyframes' interpolation.");
   }
 }
 
